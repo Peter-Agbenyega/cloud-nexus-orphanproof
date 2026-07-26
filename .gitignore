@@ -1,0 +1,127 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Editors and IDEs
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.*
+!.env.example
+*.env
+
+# AWS and cloud local files
+.aws/
+*.pem
+*.key
+*.p8
+*.p12
+*.crt
+*.cer
+*.csr
+*.jks
+*.keystore
+config.local
+
+# Database certificates and connection material
+ca.crt
+client.root.crt
+client.root.key
+client.*.crt
+client.*.key
+root.crt
+root.key
+*.sql.local
+*.db
+*.sqlite
+*.sqlite3
+
+# Common secret file patterns
+.secrets
+.secrets.*
+secrets.local
+secrets.local.*
+credentials.local
+credentials.local.*
+*.token
+*.tokens
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+dist/
+build/
+*.egg-info/
+
+# Node.js
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+!.yarn/releases/
+!.yarn/plugins/
+!.yarn/sdks/
+!.yarn/versions/
+
+# Build output
+.next/
+out/
+public/build/
+coverage/
+.turbo/
+.vercel/
+
+# Test caches
+.cache/
+.nyc_output/
+test-results/
+playwright-report/
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+.temp/
+*.tmp
+*.temp
+*.bak
+*.orig
