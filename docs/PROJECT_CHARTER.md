@@ -1,8 +1,8 @@
 # Cloud Nexus OrphanProof Project Charter
 
-Current status: PLANNED / NOT YET IMPLEMENTED
+Current status: Phase P1 database schema foundation is IMPLEMENTED AND LIVE-VERIFIED. The overall application is still under active development.
 
-Cloud Nexus OrphanProof is in the initial build phase. This charter describes the intended product direction, safety principles, MVP scope, and demo plan. It does not claim that application features, cloud integrations, persistence, tests, or deployment are already implemented.
+Cloud Nexus OrphanProof is in an active build phase. This charter describes the intended product direction, safety principles, completed Phase P1 database foundation, planned MVP scope, and demo plan. It does not claim that the full application, cloud integrations, reasoning workflow, dashboard, or human approval interface are complete.
 
 ## Problem Statement
 
@@ -25,13 +25,39 @@ The planned product produces explainable verdicts: KEEP, QUARANTINE, or REMOVE.
 
 The planned MVP is designed to map sponsor technologies to a concrete cloud operations workflow:
 
-- CockroachDB Cloud Managed MCP Server: planned interface for managed operational memory and structured resource evidence.
-- CockroachDB Distributed Vector Indexing: planned retrieval layer for historical context, incident notes, lifecycle explanations, and similar resource patterns.
-- Amazon Bedrock: planned reasoning layer for summarizing evidence and producing explainable recommendations.
+- CockroachDB Managed MCP integration: planned interface for managed operational memory and structured resource evidence.
+- CockroachDB Distributed Vector Indexing: Phase P1 schema support is implemented; retrieval integration is planned for historical context, incident notes, lifecycle explanations, and similar resource patterns.
+- Amazon Bedrock reasoning: planned reasoning layer for summarizing evidence and producing explainable recommendations.
 - AWS Lambda and API Gateway: planned serverless API surface for demo workflows.
-- Amazon S3: planned storage layer for synthetic evidence snapshots and demo artifacts.
+- Amazon S3 Remediation Passports: planned storage layer for synthetic evidence snapshots, decision evidence, and human-reviewable remediation records.
 
 All competition-facing demonstrations should use synthetic AWS resource evidence unless the user explicitly authorizes a different safe data source.
+
+## Completed Phase P1 Work
+
+Phase P1 database schema foundation is IMPLEMENTED AND LIVE-VERIFIED. Completed work includes:
+
+- CockroachDB orphanproof schema.
+- Six persistent-memory tables.
+- VECTOR(1024) embedding column.
+- Cosine vector index.
+- Safe migration and verification runner.
+- Static contract tests.
+- GitHub Actions contract testing.
+- Gitleaks secret scanning.
+
+All six persistent-memory tables currently contain zero seeded application rows.
+
+## Planned Later Phases
+
+- Synthetic AWS sample dataset: not yet implemented
+- CockroachDB Managed MCP integration: planned
+- Amazon Bedrock reasoning: planned
+- Agent verdict workflow: not yet implemented
+- AWS Lambda and API Gateway: planned
+- Amazon S3 Remediation Passports: planned
+- React dashboard: not yet implemented
+- Human approval interface: not yet implemented
 
 ## MVP Scope
 
@@ -55,8 +81,8 @@ The MVP should ingest synthetic resource records, attach explanatory memory, ret
 - Automatically modifying AWS infrastructure.
 - Requesting, storing, or exposing secrets.
 - Using real AWS account IDs, credentials, connection strings, private keys, certificates, or customer data in demos.
-- Creating production AWS resources during the documentation phase.
-- Creating CockroachDB resources during the documentation phase.
+- Creating production AWS resources during development.
+- Automatically creating CockroachDB resources outside approved migration workflows.
 - Building a full cloud cost management platform.
 - Supporting every AWS resource type in the MVP.
 - Claiming integrations are complete before they are implemented and verified.
@@ -78,11 +104,11 @@ The planned architecture has five conceptual layers:
 
 - Synthetic evidence layer: demo-safe AWS-like resource records for EBS volumes, Elastic IP addresses, and RDS instances.
 - API layer: AWS Lambda and API Gateway are planned to expose read-only evaluation workflows.
-- Memory layer: CockroachDB is planned to store resource history, annotations, evidence events, and durable context.
+- Memory layer: the Phase P1 CockroachDB schema foundation is implemented and live-verified for storing resource history, annotations, evidence events, and durable context.
 - Retrieval layer: CockroachDB Distributed Vector Indexing is planned to retrieve similar records and historical explanations.
 - Reasoning layer: Amazon Bedrock is planned to summarize evidence and generate human-reviewable verdict explanations.
 
-This architecture is not yet implemented.
+The Phase P1 memory schema foundation is implemented. The full application architecture is not yet implemented.
 
 ## Persistent-Memory Model
 
@@ -122,17 +148,19 @@ Reason: The resource may be abandoned, but the evidence is incomplete. A human s
 
 ## Definition of Success for the First Phase
 
-The first phase is successful when the repository has a truthful documentation foundation that:
+The first phase is successful when the repository has a truthful documentation and database foundation that:
 
 - Describes the product problem and planned solution clearly.
 - Defines MVP resource types and verdicts.
 - Documents safety principles and non-goals.
 - Maps planned sponsor integrations to product responsibilities.
 - Establishes agent working rules.
+- Implements and live-verifies the Phase P1 CockroachDB schema foundation.
+- Adds static contract tests and CI secret scanning.
 - Avoids secrets, fake implementation claims, fake deployment links, fake test results, and fake setup instructions.
 
 ## Current Status
 
-PLANNED / NOT YET IMPLEMENTED
+Phase P1 database schema foundation: IMPLEMENTED AND LIVE-VERIFIED
 
-The project currently contains documentation foundations only. Application code, AWS integrations, CockroachDB integrations, Bedrock reasoning, vector indexing, tests, security checks, and deployment are not yet implemented.
+The overall application is still under active development. Synthetic AWS sample data, CockroachDB Managed MCP integration, Amazon Bedrock reasoning, the agent verdict workflow, AWS Lambda and API Gateway, Amazon S3 Remediation Passports, the React dashboard, and the human approval interface remain planned or not yet implemented.
