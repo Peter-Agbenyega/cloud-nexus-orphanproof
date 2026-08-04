@@ -1,8 +1,8 @@
 # Cloud Nexus OrphanProof Project Charter
 
-Current status: Phase P1 database schema foundation is IMPLEMENTED AND LIVE-VERIFIED. The overall application is still under active development.
+Current status: Phase P1 database schema foundation is IMPLEMENTED AND LIVE-VERIFIED. Phase P2 synthetic data ingestion is IMPLEMENTED AND LIVE VERIFIED. The overall application is still under active development.
 
-Cloud Nexus OrphanProof is in an active build phase. This charter describes the intended product direction, safety principles, completed Phase P1 database foundation, planned MVP scope, and demo plan. It does not claim that the full application, cloud integrations, reasoning workflow, dashboard, or human approval interface are complete.
+Cloud Nexus OrphanProof is in an active build phase. This charter describes the intended product direction, safety principles, completed Phase P1 database foundation, implemented and live-verified Phase P2 synthetic data ingestion, planned MVP scope, and demo plan. It does not claim that the full application, cloud integrations, reasoning workflow, dashboard, or human approval interface are complete.
 
 ## Problem Statement
 
@@ -46,11 +46,33 @@ Phase P1 database schema foundation is IMPLEMENTED AND LIVE-VERIFIED. Completed 
 - GitHub Actions contract testing.
 - Gitleaks secret scanning.
 
-All six persistent-memory tables currently contain zero seeded application rows.
+Phase P1 verification confirmed the schema foundation before application seed rows were loaded.
+
+## Implemented Phase P2 Synthetic Data Ingestion
+
+Phase P2 synthetic data ingestion is IMPLEMENTED AND LIVE VERIFIED. The development CockroachDB cluster contains:
+
+- 18 synthetic resources
+- 6 EBS volumes
+- 6 Elastic IP addresses
+- 6 RDS instances
+- 41 memory events
+- 3 exceptions
+- 8 historical seed decisions
+- 2 human approvals
+- 0 decision embeddings
+
+The two primary demo stories now exist in CockroachDB:
+
+- RDS disaster-recovery standby evidence supporting KEEP.
+- Abandoned EBS volume evidence supporting QUARANTINE.
+
+`orphanproof.decision_embeddings` remains empty until the planned vector-memory phase.
 
 ## Planned Later Phases
 
-- Synthetic AWS sample dataset: not yet implemented
+- Phase P2 synthetic persistent-memory dataset: implemented and live-verified
+- Synthetic AWS sample dataset: planned for post-P2 expansion
 - CockroachDB Managed MCP integration: planned
 - Amazon Bedrock reasoning: planned
 - Agent verdict workflow: not yet implemented
@@ -132,17 +154,17 @@ The goal is to preserve why a resource existed, not only whether it appears idle
 
 ### 1. Idle RDS Disaster-Recovery Standby -> KEEP
 
-The demo presents a quiet RDS instance with low recent utilization. A traditional idle-resource report might flag it for cleanup. OrphanProof retrieves synthetic memory showing that the instance is a disaster-recovery standby for a critical service and has a recent review note confirming its purpose.
+This implemented Phase P2 demo story exists in CockroachDB. It presents a quiet RDS instance with low recent utilization. A traditional idle-resource report might flag it for cleanup. OrphanProof stores synthetic memory showing that the instance is a disaster-recovery standby for a critical service and has a recent review note confirming its purpose.
 
-Planned verdict: KEEP
+Seed verdict: KEEP
 
 Reason: The resource appears idle, but historical context proves it has a valid resilience role.
 
 ### 2. Unattached Abandoned EBS Volume -> QUARANTINE
 
-The demo presents an unattached EBS volume with no recent attachment activity. OrphanProof retrieves synthetic memory showing that it was created during a migration, but the latest review note is stale and there is not enough evidence to prove it is still needed.
+This implemented Phase P2 demo story exists in CockroachDB. It presents an unattached EBS volume with no recent attachment activity. OrphanProof stores synthetic memory showing that it was created during a migration, but the latest review note is stale and there is not enough evidence to prove it is still needed.
 
-Planned verdict: QUARANTINE
+Seed verdict: QUARANTINE
 
 Reason: The resource may be abandoned, but the evidence is incomplete. A human should review before removal.
 
@@ -162,5 +184,6 @@ The first phase is successful when the repository has a truthful documentation a
 ## Current Status
 
 Phase P1 database schema foundation: IMPLEMENTED AND LIVE-VERIFIED
+Phase P2 synthetic data ingestion: IMPLEMENTED AND LIVE VERIFIED
 
-The overall application is still under active development. Synthetic AWS sample data, CockroachDB Managed MCP integration, Amazon Bedrock reasoning, the agent verdict workflow, AWS Lambda and API Gateway, Amazon S3 Remediation Passports, the React dashboard, and the human approval interface remain planned or not yet implemented.
+The overall application is still under active development. CockroachDB Managed MCP integration, Amazon Bedrock reasoning, vector retrieval, the agent verdict workflow, AWS Lambda and API Gateway, Amazon S3 Remediation Passports, the React dashboard, and the human approval interface remain planned or not yet implemented.
