@@ -1,6 +1,6 @@
 # Cloud Nexus OrphanProof Project Charter
 
-Current status: Phase P1 database schema foundation is IMPLEMENTED AND LIVE-VERIFIED. Phase P2 synthetic data ingestion is IMPLEMENTED AND LIVE VERIFIED. The overall application is still under active development.
+Current status: Phase P1 database schema foundation is IMPLEMENTED AND LIVE-VERIFIED. Phase P2 synthetic data ingestion is IMPLEMENTED AND LIVE VERIFIED. Phase P3 local API foundation is implemented after local tests pass, but live database retrieval remains unverified during this coding step. The overall application is still under active development.
 
 Cloud Nexus OrphanProof is in an active build phase. This charter describes the intended product direction, safety principles, completed Phase P1 database foundation, implemented and live-verified Phase P2 synthetic data ingestion, planned MVP scope, and demo plan. It does not claim that the full application, cloud integrations, reasoning workflow, dashboard, or human approval interface are complete.
 
@@ -72,6 +72,7 @@ The two primary demo stories now exist in CockroachDB:
 ## Planned Later Phases
 
 - Phase P2 synthetic persistent-memory dataset: implemented and live-verified
+- Phase P3 local API foundation: implemented locally after tests pass; live CockroachDB retrieval remains unverified during this coding step
 - Synthetic AWS sample dataset: planned for post-P2 expansion
 - CockroachDB Managed MCP integration: planned
 - Amazon Bedrock reasoning: planned
@@ -132,6 +133,14 @@ The planned architecture has five conceptual layers:
 
 The Phase P1 memory schema foundation is implemented. The full application architecture is not yet implemented.
 
+## Implemented Phase P3 Local API Foundation
+
+Phase P3 adds a local read-only FastAPI memory retrieval service. It implements health, resource listing, resource detail, memory-context, and demo endpoints; typed evidence response models; and dependency-injected fake-repository testing.
+
+P3 returns evidence only. It does not generate a current AI verdict, does not use MCP, does not use vector retrieval, does not call Amazon Bedrock, does not deploy to AWS, and does not implement the dashboard. Live retrieval from CockroachDB was not verified during this coding step.
+
+The safety principles remain unchanged: read-only by default, synthetic data by default, no hardcoded secrets, no automatic destructive AWS actions, and human approval required for any remediation decision.
+
 ## Persistent-Memory Model
 
 The planned persistent-memory model treats each cloud resource as a timeline of evidence rather than a single current metric.
@@ -185,5 +194,6 @@ The first phase is successful when the repository has a truthful documentation a
 
 Phase P1 database schema foundation: IMPLEMENTED AND LIVE-VERIFIED
 Phase P2 synthetic data ingestion: IMPLEMENTED AND LIVE VERIFIED
+Phase P3 local API foundation: IMPLEMENTED LOCALLY AFTER TESTS PASS; LIVE DATABASE RETRIEVAL UNVERIFIED DURING THIS CODING STEP
 
 The overall application is still under active development. CockroachDB Managed MCP integration, Amazon Bedrock reasoning, vector retrieval, the agent verdict workflow, AWS Lambda and API Gateway, Amazon S3 Remediation Passports, the React dashboard, and the human approval interface remain planned or not yet implemented.
