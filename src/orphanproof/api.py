@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -32,6 +34,7 @@ def _build_live_repository(settings: Settings) -> MemoryRepository:
 def create_app(
     repository: MemoryRepositoryProtocol | None = None,
     settings: Settings | None = None,
+    now_provider: Callable[[], datetime] | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     app = FastAPI(title="Cloud Nexus OrphanProof API", version=__version__)
@@ -49,7 +52,7 @@ def create_app(
         return _build_live_repository(app_settings)
 
     def get_service(repo: MemoryRepositoryProtocol = Depends(get_repository)) -> MemoryService:
-        return MemoryService(repo)
+        return MemoryService(repo, now_provider=now_provider)
 
     @app.exception_handler(ResourceNotFoundError)
     async def resource_not_found_handler(_request: Any, exc: ResourceNotFoundError) -> JSONResponse:

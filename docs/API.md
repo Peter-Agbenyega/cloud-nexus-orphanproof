@@ -41,16 +41,19 @@ The project supports editable development installation through `pyproject.toml`.
 
 Use `.env.example` as the safe template. Never commit `.env`, and never paste credentials into documentation, tests, or source code.
 
-Required for live repository use only:
+Safe non-secret local examples:
 
 ```text
-DATABASE_URL=postgresql://username:password@host:26257/defaultdb?sslmode=verify-full
 ORPHANPROOF_ENV=development
 ORPHANPROOF_CORS_ORIGINS=http://localhost:5173
 ORPHANPROOF_LOG_LEVEL=INFO
 ```
 
+Live database use requires `DATABASE_URL`, but the value must be placed only in the ignored local `.env` file or a managed secret service. Obtain the connection value from the approved CockroachDB connection workflow. Never copy the value into source code, documentation, screenshots, logs, terminal output, or Git history.
+
 P3 tests use fake repositories and do not require `.env` or a live database connection.
+
+Exception evidence uses effective status. A stored `ACTIVE` exception protects a resource only until its `expires_at` time is reached; after that instant it is treated as expired for evidence counts and signals. The stored historical `ResourceException` record is returned unchanged and is not mutated by the API.
 
 ## Local Run Command
 

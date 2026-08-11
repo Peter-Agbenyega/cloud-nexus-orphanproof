@@ -183,7 +183,8 @@ class FakeMemoryRepository:
 
 class P3ServiceTests(unittest.TestCase):
     def setUp(self):
-        self.service = MemoryService(FakeMemoryRepository())
+        self.now = utc("2026-08-15T00:00:00Z")
+        self.service = MemoryService(FakeMemoryRepository(), now_provider=lambda: self.now)
 
     def test_resource_listing_and_filtering(self):
         resources = self.service.list_resources()
@@ -201,7 +202,10 @@ class P3ServiceTests(unittest.TestCase):
 
     def test_rds_demo_evidence_signals(self):
         context = self.service.get_memory_context("demo-rds-dr-standby-001")
+        self.assertEqual(context.evidence_counts.active_exceptions, 1)
+        self.assertEqual(context.evidence_counts.expired_exceptions, 0)
         self.assertTrue(context.evidence_signals.active_exception_exists)
+        self.assertFalse(context.evidence_signals.expired_exception_exists)
         self.assertTrue(context.evidence_signals.dependency_evidence_exists)
         self.assertTrue(context.evidence_signals.prior_keep_exists)
         self.assertFalse(context.ai_verdict_generated)
@@ -216,6 +220,85 @@ class P3ServiceTests(unittest.TestCase):
     def test_unknown_resource_raises(self):
         with self.assertRaises(ResourceNotFoundError):
             self.service.get_memory_context("missing-resource")
+
+    def test_active_future_exception_is_effectively_active(self):
+        repository = FakeMemoryRepository()
+        repository.exceptions[RDS_ID][0]["status"] = "ACTIVE"
+        repository.exceptions[RDS_ID][0]["expires_at"] = utc("2026-08-16T00:00:00Z")
+        service = MemoryService(repository, now_provider=lambda: self.now)
+
+        context = service.get_memory_context("demo-rds-dr-standby-001")
+
+        self.assertTrue(context.evidence_signals.active_exception_exists)
+        self.assertEqual(context.evidence_counts.active_exceptions, 1)
+        self.assertFalse(context.evidence_signals.expired_exception_exists)
+        self.assertEqual(context.evidence_counts.expired_exceptions, 0)
+
+    def test_active_exception_expiring_now_is_effectively_expired(self):
+        repository = FakeMemoryRepository()
+        repository.exceptions[RDS_ID][0]["status"] = "ACTIVE"
+        repository.exceptions[RDS_ID][0]["expires_at"] = self.now
+        service = MemoryService(repository, now_provider=lambda: self.now)
+
+        context = service.get_memory_context("demo-rds-dr-standby-001")
+
+        self.assertFalse(context.evidence_signals.active_exception_exists)
+        self.assertEqual(context.evidence_counts.active_exceptions, 0)
+        self.assertTrue(context.evidence_signals.expired_exception_exists)
+        self.assertEqual(context.evidence_counts.expired_exceptions, 1)
+
+    def test_active_past_exception_is_effectively_expired(self):
+        repository = FakeMemoryRepository()
+        repository.exceptions[RDS_ID][0]["status"] = "ACTIVE"
+        repository.exceptions[RDS_ID][0]["expires_at"] = utc("2026-08-14T23:59:59Z")
+        service = MemoryService(repository, now_provider=lambda: self.now)
+
+        context = service.get_memory_context("demo-rds-dr-standby-001")
+
+        self.assertFalse(context.evidence_signals.active_exception_exists)
+        self.assertEqual(context.evidence_counts.active_exceptions, 0)
+        self.assertTrue(context.evidence_signals.expired_exception_exists)
+        self.assertEqual(context.evidence_counts.expired_exceptions, 1)
+
+    def test_active_exception_without_expiration_remains_effectively_active(self):
+        repository = FakeMemoryRepository()
+        repository.exceptions[RDS_ID][0]["status"] = "ACTIVE"
+        repository.exceptions[RDS_ID][0]["expires_at"] = None
+        service = MemoryService(repository, now_provider=lambda: self.now)
+
+        context = service.get_memory_context("demo-rds-dr-standby-001")
+
+        self.assertTrue(context.evidence_signals.active_exception_exists)
+        self.assertEqual(context.evidence_counts.active_exceptions, 1)
+        self.assertFalse(context.evidence_signals.expired_exception_exists)
+        self.assertEqual(context.evidence_counts.expired_exceptions, 0)
+
+    def test_stored_expired_exception_remains_expired(self):
+        repository = FakeMemoryRepository()
+        repository.exceptions[RDS_ID][0]["status"] = "EXPIRED"
+        repository.exceptions[RDS_ID][0]["expires_at"] = utc("2026-08-16T00:00:00Z")
+        service = MemoryService(repository, now_provider=lambda: self.now)
+
+        context = service.get_memory_context("demo-rds-dr-standby-001")
+
+        self.assertFalse(context.evidence_signals.active_exception_exists)
+        self.assertEqual(context.evidence_counts.active_exceptions, 0)
+        self.assertTrue(context.evidence_signals.expired_exception_exists)
+        self.assertEqual(context.evidence_counts.expired_exceptions, 1)
+
+    def test_stored_revoked_exception_is_neither_active_nor_expired(self):
+        repository = FakeMemoryRepository()
+        repository.exceptions[RDS_ID][0]["status"] = "REVOKED"
+        repository.exceptions[RDS_ID][0]["expires_at"] = utc("2026-08-14T00:00:00Z")
+        service = MemoryService(repository, now_provider=lambda: self.now)
+
+        context = service.get_memory_context("demo-rds-dr-standby-001")
+
+        self.assertFalse(context.evidence_signals.active_exception_exists)
+        self.assertEqual(context.evidence_counts.active_exceptions, 0)
+        self.assertFalse(context.evidence_signals.expired_exception_exists)
+        self.assertEqual(context.evidence_counts.expired_exceptions, 0)
+        self.assertEqual(context.exceptions[0].status, "REVOKED")
 
 
 if __name__ == "__main__":

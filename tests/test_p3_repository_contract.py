@@ -16,6 +16,8 @@ from orphanproof.repository import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_PATH = REPO_ROOT / "src" / "orphanproof" / "repository.py"
+ENV_EXAMPLE_PATH = REPO_ROOT / ".env.example"
+API_DOC_PATH = REPO_ROOT / "docs" / "API.md"
 
 
 class P3RepositoryContractTests(unittest.TestCase):
@@ -155,6 +157,30 @@ class P3RepositoryContractTests(unittest.TestCase):
         self.assertNotIn("<=>", lower_source)
         self.assertNotIn("vector_cosine", lower_source)
         self.assertNotIn("similarity", lower_source)
+
+    def test_env_example_omits_credential_shaped_database_url(self):
+        env_example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
+        forbidden = ("postgresql://", "postgres://", "username:password")
+        for value in forbidden:
+            with self.subTest(value=value):
+                self.assertNotIn(value, env_example)
+        self.assertIsNone(re.search(r"(?m)^\s*DATABASE_URL\s*=\s*\S+", env_example))
+        self.assertIn("DATABASE_URL is intentionally omitted", env_example)
+        self.assertIn("untracked local .env file", env_example)
+        self.assertIn("managed secret service", env_example)
+        self.assertIn("Never commit, print, or document", env_example)
+
+    def test_api_docs_omit_credential_shaped_database_url(self):
+        api_doc = API_DOC_PATH.read_text(encoding="utf-8")
+        forbidden = ("postgresql://", "postgres://", "username:password")
+        for value in forbidden:
+            with self.subTest(value=value):
+                self.assertNotIn(value, api_doc)
+        self.assertIn("ignored local `.env` file", api_doc)
+        self.assertIn("approved CockroachDB connection workflow", api_doc)
+        self.assertIn("Never copy the value into source code", api_doc)
+        self.assertIn("Exception evidence uses effective status", api_doc)
+        self.assertIn("returned unchanged and is not mutated", api_doc)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import unittest
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 from test_p3_service import FakeMemoryRepository
@@ -14,7 +15,14 @@ from orphanproof.config import Settings
 class P3ApiTests(unittest.TestCase):
     def setUp(self):
         settings = Settings(database_url=None, cors_origins=["http://localhost:5173"])
-        self.client = TestClient(create_app(repository=FakeMemoryRepository(), settings=settings))
+        now = datetime(2026, 8, 15, tzinfo=UTC)
+        self.client = TestClient(
+            create_app(
+                repository=FakeMemoryRepository(),
+                settings=settings,
+                now_provider=lambda: now,
+            )
+        )
 
     def assert_safe_response(self, payload):
         text = json.dumps(payload)

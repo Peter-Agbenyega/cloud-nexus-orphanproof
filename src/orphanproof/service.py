@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from orphanproof.models import (
@@ -30,8 +32,13 @@ class InvalidPaginationError(ValueError):
 
 
 class MemoryService:
-    def __init__(self, repository: MemoryRepositoryProtocol):
+    def __init__(
+        self,
+        repository: MemoryRepositoryProtocol,
+        now_provider: Callable[[], datetime] | None = None,
+    ):
         self._repository = repository
+        self._now_provider = now_provider or self._utc_now
 
     def list_resources(
         self,
@@ -63,14 +70,15 @@ class MemoryService:
             HistoricalDecision.model_validate(row) for row in raw_context["historical_decisions"]
         ]
         approvals = [HumanApproval.model_validate(row) for row in raw_context["human_approvals"]]
+        now = self._current_time()
         return MemoryContext(
             resource=resource,
             memory_events=events,
             exceptions=exceptions,
             historical_decisions=decisions,
             human_approvals=approvals,
-            evidence_counts=self._build_counts(events, exceptions, decisions, approvals),
-            evidence_signals=self._build_signals(events, exceptions, decisions),
+            evidence_counts=self._build_counts(events, exceptions, decisions, approvals, now),
+            evidence_signals=self._build_signals(events, exceptions, decisions, now),
         )
 
     def get_demo_links(self) -> dict[str, Any]:
@@ -127,38 +135,70 @@ class MemoryService:
             raise InvalidPaginationError("offset must be non-negative")
 
     @staticmethod
+    def _utc_now() -> datetime:
+        return datetime.now(UTC)
+
+    def _current_time(self) -> datetime:
+        return self._now_provider().astimezone(UTC)
+
+    @staticmethod
+    def _exception_is_effectively_active(
+        exception: ResourceException,
+        now: datetime,
+    ) -> bool:
+        return exception.status == ExceptionStatus.ACTIVE and (
+            exception.expires_at is None or exception.expires_at.astimezone(UTC) > now
+        )
+
+    @classmethod
+    def _exception_is_effectively_expired(
+        cls,
+        exception: ResourceException,
+        now: datetime,
+    ) -> bool:
+        return exception.status == ExceptionStatus.EXPIRED or (
+            exception.status == ExceptionStatus.ACTIVE
+            and exception.expires_at is not None
+            and exception.expires_at.astimezone(UTC) <= now
+        )
+
+    @classmethod
     def _build_counts(
+        cls,
         events: list[MemoryEvent],
         exceptions: list[ResourceException],
         decisions: list[HistoricalDecision],
         approvals: list[HumanApproval],
+        now: datetime,
     ) -> EvidenceCounts:
         return EvidenceCounts(
             total_memory_events=len(events),
             active_exceptions=sum(
-                exception.status == ExceptionStatus.ACTIVE for exception in exceptions
+                cls._exception_is_effectively_active(exception, now) for exception in exceptions
             ),
             expired_exceptions=sum(
-                exception.status == ExceptionStatus.EXPIRED for exception in exceptions
+                cls._exception_is_effectively_expired(exception, now) for exception in exceptions
             ),
             historical_decisions=len(decisions),
             human_approvals=len(approvals),
         )
 
-    @staticmethod
+    @classmethod
     def _build_signals(
+        cls,
         events: list[MemoryEvent],
         exceptions: list[ResourceException],
         decisions: list[HistoricalDecision],
+        now: datetime,
     ) -> EvidenceSignals:
         event_types = {event.event_type for event in events}
         verdicts = {decision.verdict for decision in decisions}
         return EvidenceSignals(
             active_exception_exists=any(
-                exception.status == ExceptionStatus.ACTIVE for exception in exceptions
+                cls._exception_is_effectively_active(exception, now) for exception in exceptions
             ),
             expired_exception_exists=any(
-                exception.status == ExceptionStatus.EXPIRED for exception in exceptions
+                cls._exception_is_effectively_expired(exception, now) for exception in exceptions
             ),
             dependency_evidence_exists=EventType.DEPENDENCY in event_types,
             ownership_evidence_exists=EventType.OWNERSHIP in event_types,
