@@ -39,6 +39,24 @@ The seed was run twice and remained idempotent. Live verification returned PASS.
 
 This confirms the synthetic data foundation only. MCP integration, Amazon Bedrock reasoning, vector retrieval, the agent workflow, the dashboard, and AWS deployment remain planned or not yet implemented. The application and AI agent are not complete.
 
+## Implemented Phase P3 API Foundation
+
+The local Phase P3 API foundation is implemented for read-only memory retrieval:
+
+- Read-only FastAPI memory retrieval service is implemented locally.
+- Evidence response models are implemented.
+- Dependency injection and fake-repository testing are implemented.
+- Health, resource, memory-context, and demo endpoints are implemented.
+- P3 has not yet been live-tested against CockroachDB during this coding step.
+- MCP is still planned.
+- Vector similarity retrieval is still planned.
+- Bedrock reasoning is still planned.
+- AWS deployment is still planned.
+- The AI agent is not complete.
+- No current AI verdict is generated.
+
+Local API documentation is available in `docs/API.md`.
+
 ## Planned Sponsor Integrations
 
 - CockroachDB Managed MCP integration: planned
