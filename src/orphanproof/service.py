@@ -62,7 +62,9 @@ class MemoryService:
         raw_context = self._repository.get_memory_context(resource_key)
         if raw_context is None:
             raise ResourceNotFoundError(resource_key)
+        return self.build_memory_context_from_raw(raw_context)
 
+    def build_memory_context_from_raw(self, raw_context: dict[str, Any]) -> MemoryContext:
         resource = ResourceDetail.model_validate(raw_context["resource"])
         events = [MemoryEvent.model_validate(row) for row in raw_context["memory_events"]]
         exceptions = [ResourceException.model_validate(row) for row in raw_context["exceptions"]]

@@ -314,12 +314,21 @@ class DatabaseMigrationContractTests(unittest.TestCase):
         self.assertIn("IMPLEMENTED AND LIVE-VERIFIED", self.charter)
         self.assertIn("overall application is still under active development", self.charter)
 
-    def test_planned_integrations_remain_clearly_marked(self):
-        planned_items = (
-            "Synthetic AWS sample dataset",
+    def test_integration_status_remains_clearly_marked(self):
+        implemented_items = (
             "CockroachDB Managed MCP integration",
+            "CockroachDB Distributed Vector Indexing",
             "Amazon Bedrock reasoning",
-            "Agent verdict workflow",
+        )
+        for item in implemented_items:
+            with self.subTest(item=item):
+                self.assertIn(item, self.readme)
+                self.assertIn(item, self.charter)
+        self.assertIn("Phase P4 agentic memory integration", self.charter)
+        self.assertIn("implemented locally", self.readme.lower())
+        self.assertIn("live verification pending", self.charter.lower())
+
+        planned_items = (
             "AWS Lambda and API Gateway",
             "Amazon S3 Remediation Passports",
             "React dashboard",
@@ -328,15 +337,7 @@ class DatabaseMigrationContractTests(unittest.TestCase):
         for item in planned_items:
             with self.subTest(item=item):
                 self.assertIn(item, self.readme)
-                self.assertRegex(
-                    self.readme,
-                    rf"{re.escape(item)}: (planned|not yet implemented)",
-                )
                 self.assertIn(item, self.charter)
-                self.assertRegex(
-                    self.charter,
-                    rf"{re.escape(item)}: (planned|not yet implemented)",
-                )
 
 
 if __name__ == "__main__":

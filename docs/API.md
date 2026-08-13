@@ -1,8 +1,8 @@
 # Cloud Nexus OrphanProof API
 
-Phase P3 implements a local, read-only FastAPI memory retrieval service. The API retrieves persistent CockroachDB memory through a repository layer, assembles evidence packages, and returns typed evidence-only responses for review workflows.
+Phase P3 implements a local, read-only FastAPI memory retrieval service. Phase P4 adds an AI-assisted analysis endpoint that combines persistent memory, Titan embeddings, CockroachDB vector retrieval, and Nova reasoning when live providers are configured.
 
-P3 does not generate an AI verdict. Historical seed decisions are returned as historical evidence only.
+The P3 memory-context endpoint does not generate an AI verdict. Historical seed decisions are returned as historical evidence only.
 
 ## Implemented in Phase P3
 
@@ -16,15 +16,13 @@ P3 does not generate an AI verdict. Historical seed decisions are returned as hi
 
 ## Still Planned
 
-- CockroachDB Managed MCP retrieval
-- Vector similarity retrieval
-- Amazon Bedrock reasoning
-- Current AI verdict generation
+- Live Managed MCP verification
+- Live Bedrock verification
 - Dashboard
 - AWS deployment
 - Human approval workflow UI
 
-No automatic deletion, release, mutation, or remediation workflow exists in P3.
+No automatic deletion, release, mutation, or remediation workflow exists in P3 or P4.
 
 ## Local Environment
 
@@ -47,9 +45,16 @@ Safe non-secret local examples:
 ORPHANPROOF_ENV=development
 ORPHANPROOF_CORS_ORIGINS=http://localhost:5173
 ORPHANPROOF_LOG_LEVEL=INFO
+ORPHANPROOF_AWS_REGION=us-east-1
+ORPHANPROOF_BEDROCK_EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
+ORPHANPROOF_BEDROCK_REASONING_MODEL=amazon.nova-lite-v1:0
+ORPHANPROOF_MCP_ENABLED=false
+ORPHANPROOF_MCP_URL=https://cockroachlabs.cloud/mcp
 ```
 
 Live database use requires `DATABASE_URL`, but the value must be placed only in the ignored local `.env` file or a managed secret service. Obtain the connection value from the approved CockroachDB connection workflow. Never copy the value into source code, documentation, screenshots, logs, terminal output, or Git history.
+
+Managed MCP live verification also requires local `ORPHANPROOF_MCP_CLUSTER_ID` and `ORPHANPROOF_MCP_BEARER_TOKEN` values. These are intentionally omitted from `.env.example` and must never be pasted into chat, source, documentation, logs, or test fixtures.
 
 P3 tests use fake repositories and do not require `.env` or a live database connection.
 
@@ -137,3 +142,23 @@ curl http://127.0.0.1:8000/api/v1/demo
 ```
 
 The demo endpoint states that records are synthetic, the API provides evidence only, and no new AI verdict has been generated.
+
+### `POST /api/v1/resources/{resource_key}/analyze`
+
+Runs the P4 AI-assisted analysis path for a known synthetic resource. This endpoint may invoke Bedrock and vector search when live providers are configured.
+
+Required safety fields in successful responses:
+
+- `analysis_mode`: `ai_assisted`
+- `ai_verdict_generated`: `true`
+- `decision_persisted`: `false`
+- `automatic_action_taken`: `false`
+- `human_review_required`: `true`
+
+The response includes the current AI recommendation, similar historical decisions without raw embeddings, evidence signals, memory transport provenance, and configured model IDs. It does not perform remediation and does not persist a current decision.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/resources/demo-rds-dr-standby-001/analyze
+```
+
+Provider failures return sanitized errors and must not include database URLs, AWS credentials, MCP credentials, full embeddings, raw provider responses, or stack traces.

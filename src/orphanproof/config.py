@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_CORS_ORIGIN = "http://localhost:5173"
+DEFAULT_AWS_REGION = "us-east-1"
+DEFAULT_EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
+DEFAULT_REASONING_MODEL = "amazon.nova-lite-v1:0"
+DEFAULT_MCP_URL = "https://cockroachlabs.cloud/mcp"
 
 
 class Settings(BaseSettings):
@@ -32,6 +36,42 @@ class Settings(BaseSettings):
         default="INFO",
         validation_alias=AliasChoices("ORPHANPROOF_LOG_LEVEL", "log_level"),
     )
+    aws_region: str = Field(
+        default=DEFAULT_AWS_REGION,
+        validation_alias=AliasChoices("ORPHANPROOF_AWS_REGION", "aws_region"),
+    )
+    bedrock_embedding_model: str = Field(
+        default=DEFAULT_EMBEDDING_MODEL,
+        validation_alias=AliasChoices(
+            "ORPHANPROOF_BEDROCK_EMBEDDING_MODEL",
+            "bedrock_embedding_model",
+        ),
+    )
+    bedrock_reasoning_model: str = Field(
+        default=DEFAULT_REASONING_MODEL,
+        validation_alias=AliasChoices(
+            "ORPHANPROOF_BEDROCK_REASONING_MODEL",
+            "bedrock_reasoning_model",
+        ),
+    )
+    mcp_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ORPHANPROOF_MCP_ENABLED", "mcp_enabled"),
+    )
+    mcp_url: str = Field(
+        default=DEFAULT_MCP_URL,
+        validation_alias=AliasChoices("ORPHANPROOF_MCP_URL", "mcp_url"),
+    )
+    mcp_cluster_id: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ORPHANPROOF_MCP_CLUSTER_ID", "mcp_cluster_id"),
+        repr=False,
+    )
+    mcp_bearer_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ORPHANPROOF_MCP_BEARER_TOKEN", "mcp_bearer_token"),
+        repr=False,
+    )
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -54,9 +94,16 @@ class Settings(BaseSettings):
             raise RuntimeError("DATABASE_URL is required for the live repository")
         return self.database_url
 
+    def mcp_is_configured(self) -> bool:
+        return bool(self.mcp_enabled and self.mcp_cluster_id and self.mcp_bearer_token)
+
     def __repr__(self) -> str:
-        fields = self.model_dump(exclude={"database_url"})
-        return f"Settings(database_url='***REDACTED***', {fields!r})"
+        fields = self.model_dump(exclude={"database_url", "mcp_cluster_id", "mcp_bearer_token"})
+        return (
+            "Settings(database_url='***REDACTED***', "
+            "mcp_cluster_id='***REDACTED***', "
+            f"mcp_bearer_token='***REDACTED***', {fields!r})"
+        )
 
     def __str__(self) -> str:
         return self.__repr__()

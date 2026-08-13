@@ -8,7 +8,14 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 
 class ResourceType(StrEnum):
@@ -163,6 +170,86 @@ class MemoryContext(PhaseModel):
             "current AI verdict generation",
         ]
     )
+
+
+class MemoryTransport(StrEnum):
+    DIRECT_COCKROACHDB = "direct_cockroachdb"
+    COCKROACHDB_MANAGED_MCP = "cockroachdb_managed_mcp"
+    TEST_FAKE = "test_fake"
+
+
+class CurrentAIVerdict(PhaseModel):
+    verdict: Verdict
+    confidence_score: int = Field(ge=0, le=100)
+    evidence_summary: str = Field(min_length=1)
+    blast_radius: str = Field(min_length=1)
+    recommended_action: str = Field(min_length=1)
+    rollback_plan: str = Field(min_length=1)
+    human_review_required: Literal[True] = True
+
+    @model_validator(mode="after")
+    def reject_execution_claims(self) -> CurrentAIVerdict:
+        destructive_claims = (
+            "deleted",
+            "terminated",
+            "released",
+            "detached",
+            "modified",
+            "stopped",
+            "removed the resource",
+            "action taken",
+        )
+        combined = " ".join(
+            [
+                self.evidence_summary,
+                self.blast_radius,
+                self.recommended_action,
+                self.rollback_plan,
+            ]
+        ).lower()
+        if any(claim in combined for claim in destructive_claims):
+            raise ValueError("current verdict must not claim a destructive action occurred")
+        return self
+
+
+class SimilarHistoricalDecision(PhaseModel):
+    decision_id: UUID
+    resource_key: str
+    resource_type: ResourceType
+    lifecycle_state: str
+    historical_verdict: Verdict
+    distance: float = Field(ge=0)
+    similarity: float
+    evidence_summary: str
+    recommended_action: str
+    blast_radius: str
+    rollback_plan: str
+
+
+class ManagedMcpCapabilityReport(PhaseModel):
+    provider: Literal["cockroachdb_cloud_managed_mcp"] = "cockroachdb_cloud_managed_mcp"
+    configured: bool
+    connected: bool
+    read_only_policy: Literal[True] = True
+    allowed_tools: list[str]
+    write_tools_allowed: Literal[False] = False
+    error: str | None = None
+
+
+class P4AnalysisResponse(PhaseModel):
+    resource: ResourceDetail
+    current_ai_verdict: CurrentAIVerdict
+    similar_historical_decisions: list[SimilarHistoricalDecision]
+    evidence_signals: EvidenceSignals
+    memory_transport: MemoryTransport
+    embedding_model: str
+    reasoning_model: str
+    analysis_mode: Literal["ai_assisted"] = "ai_assisted"
+    ai_verdict_generated: Literal[True] = True
+    decision_persisted: Literal[False] = False
+    automatic_action_taken: Literal[False] = False
+    human_review_required: Literal[True] = True
+    vector_neighbors_used: int = Field(ge=0, le=5)
 
 
 class HealthResponse(PhaseModel):

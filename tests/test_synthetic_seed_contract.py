@@ -246,7 +246,7 @@ class SyntheticSeedContractTests(unittest.TestCase):
             self.readme_text,
         )
         self.assertIn("Live verification returned PASS", self.readme_text)
-        self.assertIn("The application and AI agent are not complete", self.readme_text)
+        self.assertIn("Phase P4 agentic memory integration is implemented locally", self.readme_text)
 
     def test_readme_contains_phase_p2_verified_counts(self):
         required_counts = (
@@ -274,7 +274,7 @@ class SyntheticSeedContractTests(unittest.TestCase):
         self.assertIn("41 memory events", self.project_charter_text)
         self.assertIn("0 decision embeddings", self.project_charter_text)
         self.assertIn(
-            "`orphanproof.decision_embeddings` remains empty until the planned vector-memory phase",
+            "Phase P4 agentic memory integration: implemented locally",
             self.project_charter_text,
         )
 
@@ -297,22 +297,20 @@ class SyntheticSeedContractTests(unittest.TestCase):
         self.assertIn("0 decision embeddings", self.dataset_doc_text)
         self.assertIn("does not claim production readiness", self.dataset_doc_text)
 
-    def test_planned_integrations_remain_marked_as_planned_or_not_implemented(self):
+    def test_integration_status_remains_truthful_after_p4(self):
         for doc_name, doc_text in (
             ("README.md", self.readme_text),
             ("PROJECT_CHARTER.md", self.project_charter_text),
         ):
             with self.subTest(doc=doc_name, integration="MCP"):
                 self.assertIn("MCP integration", doc_text)
-                self.assertRegex(doc_text, r"MCP integration: planned|MCP integration.*remain planned")
+                self.assertRegex(doc_text, r"MCP integration: implemented locally")
             with self.subTest(doc=doc_name, integration="Bedrock"):
-                self.assertIn("Amazon Bedrock reasoning: planned", doc_text)
+                self.assertIn("Amazon Bedrock", doc_text)
+                self.assertIn("pending", doc_text.lower())
             with self.subTest(doc=doc_name, integration="agent workflow"):
-                self.assertRegex(doc_text, r"agent (verdict )?workflow")
-                self.assertRegex(
-                    doc_text,
-                    r"agent (verdict )?workflow.*not yet implemented|agent (verdict )?workflow.*remain planned",
-                )
+                self.assertIn("agentic memory integration", doc_text)
+                self.assertIn("implemented locally", doc_text.lower())
             with self.subTest(doc=doc_name, integration="dashboard"):
                 self.assertIn("dashboard", doc_text)
                 self.assertRegex(doc_text, r"dashboard.*not yet implemented|dashboard.*remain planned")
