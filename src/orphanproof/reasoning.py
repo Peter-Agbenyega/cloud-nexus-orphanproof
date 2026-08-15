@@ -79,10 +79,7 @@ class BedrockReasoningProvider:
         try:
             return parse_current_ai_verdict(text)
         except ReasoningProviderError:
-            repair = self._converse(
-                "Repair the previous answer into valid JSON only. Do not change safety rules.\n"
-                + text
-            )
+            repair = self._converse(build_repair_prompt(prompt, text))
             return parse_current_ai_verdict(repair)
 
     def _converse(self, prompt: str) -> str:
@@ -123,6 +120,18 @@ def build_reasoning_prompt(
             "known_dependency_is_strong_keep_evidence": True,
             "prefer_quarantine_when_evidence_is_insufficient": True,
         },
+    }
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
+def build_repair_prompt(original_prompt: str, invalid_response: str) -> str:
+    payload = {
+        "instruction": (
+            "Return corrected JSON only. Use the original resource evidence and vector-neighbor "
+            "context below. Do not invent evidence. Do not change safety rules."
+        ),
+        "original_evidence_prompt": original_prompt,
+        "invalid_model_response": invalid_response,
     }
     return json.dumps(payload, sort_keys=True, default=str)
 

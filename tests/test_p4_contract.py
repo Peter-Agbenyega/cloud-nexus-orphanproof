@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -30,12 +32,14 @@ from orphanproof.models import (
     CurrentAIVerdict,
     MemoryTransport,
     SimilarHistoricalDecision,
+    contains_affirmative_destructive_execution_claim,
 )
 from orphanproof.reasoning import (
     SYSTEM_PROMPT,
     BedrockReasoningProvider,
     ReasoningProviderError,
     build_reasoning_prompt,
+    build_repair_prompt,
     parse_current_ai_verdict,
 )
 from orphanproof.service import MemoryService, ResourceNotFoundError
@@ -278,6 +282,17 @@ class P4VectorTests(unittest.TestCase):
 
 
 class P4McpTests(unittest.TestCase):
+    def load_mcp_verifier_module(self) -> Any:
+        script_path = REPO_ROOT / "scripts" / "p4_verify_mcp.py"
+        spec = importlib.util.spec_from_file_location("p4_verify_mcp_test", script_path)
+        self.assertIsNotNone(spec)
+        assert spec is not None
+        module = importlib.util.module_from_spec(spec)
+        self.assertIsNotNone(spec.loader)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+
     def test_default_disabled_report_and_secret_repr(self):
         settings = Settings(mcp_bearer_token="secret-token", mcp_cluster_id="secret-cluster")
         text = repr(settings)
@@ -286,6 +301,46 @@ class P4McpTests(unittest.TestCase):
         report = CockroachManagedMcpClient(Settings()).capability_report()
         self.assertFalse(report.configured)
         self.assertFalse(report.connected)
+
+    def test_mcp_verifier_loads_explicit_env_file(self):
+        module = self.load_mcp_verifier_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "ORPHANPROOF_MCP_ENABLED=true",
+                        "ORPHANPROOF_MCP_CLUSTER_ID=fake-cluster-for-test",
+                        "ORPHANPROOF_MCP_BEARER_TOKEN=fake-token-for-test",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            settings = module.load_settings(env_path)
+            lines = "\n".join(module.build_status_lines(settings))
+        self.assertTrue(settings.mcp_is_configured())
+        self.assertNotIn("fake-token-for-test", repr(settings))
+        self.assertNotIn("fake-cluster-for-test", repr(settings))
+        self.assertIn("MCP_CLUSTER_ID_PRESENT=True", lines)
+        self.assertIn("MCP_AUTH_PRESENT=True", lines)
+        self.assertNotIn("fake-token-for-test", lines)
+        self.assertNotIn("fake-cluster-for-test", lines)
+
+    def test_mcp_verifier_missing_file_and_missing_auth_skip_safely(self):
+        module = self.load_mcp_verifier_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_env_path = Path(tmpdir) / ".env"
+            missing_file_settings = module.load_settings(missing_env_path)
+            empty_env_path = Path(tmpdir) / "empty.env"
+            empty_env_path.write_text("ORPHANPROOF_MCP_ENABLED=true\n", encoding="utf-8")
+            missing_auth_settings = module.load_settings(empty_env_path)
+
+        for settings in (missing_file_settings, missing_auth_settings):
+            with self.subTest(settings=repr(settings)):
+                lines = module.build_status_lines(settings)
+                self.assertFalse(settings.mcp_is_configured())
+                self.assertIn("MCP_LIVE_VERIFICATION=SKIPPED", lines)
+                self.assertIn("MCP_AUTH_PRESENT=False", lines)
 
     def test_allowlist_and_deny_policy(self):
         self.assertTrue(is_tool_allowed("select_query"))
@@ -365,11 +420,28 @@ class P4ReasoningTests(unittest.TestCase):
         verdict = BedrockReasoningProvider(client=client).reason(context, [])
         self.assertEqual(verdict.verdict, "QUARANTINE")
         self.assertEqual(len(client.calls), 2)
+        original_prompt = client.calls[0]["messages"][0]["content"][0]["text"]
+        repair_prompt = client.calls[1]["messages"][0]["content"][0]["text"]
+        repair_payload = json.loads(repair_prompt)
+        self.assertEqual(repair_payload["original_evidence_prompt"], original_prompt)
+        self.assertEqual(repair_payload["invalid_model_response"], "not-json")
+        self.assertIn("Do not invent evidence", repair_payload["instruction"])
+        self.assertEqual(client.calls[1]["system"][0]["text"], SYSTEM_PROMPT)
         with self.assertRaises(ReasoningProviderError):
-            BedrockReasoningProvider(client=FakeReasoningClient(["not-json", "still bad"])).reason(
+            failing_client = FakeReasoningClient(["not-json", "still bad"])
+            BedrockReasoningProvider(client=failing_client).reason(
                 context,
                 [],
             )
+        self.assertEqual(len(failing_client.calls), 2)
+
+    def test_repair_prompt_contains_original_evidence_and_invalid_response(self):
+        prompt = '{"current_resource_evidence": {"resource": "demo"}}'
+        repair = build_repair_prompt(prompt, "malformed response")
+        payload = json.loads(repair)
+        self.assertEqual(payload["original_evidence_prompt"], prompt)
+        self.assertEqual(payload["invalid_model_response"], "malformed response")
+        self.assertIn("Do not invent evidence", payload["instruction"])
 
     def test_invalid_verdict_confidence_and_false_human_review_rejected(self):
         with self.assertRaises(ReasoningProviderError):
@@ -386,6 +458,59 @@ class P4ReasoningTests(unittest.TestCase):
         payload["evidence_summary"] = "I deleted the resource."
         with self.assertRaises(ReasoningProviderError):
             parse_current_ai_verdict(json.dumps(payload))
+
+    def test_destructive_execution_detector_allows_safe_language(self):
+        accepted = (
+            "No action taken.",
+            "No resource was deleted.",
+            "If the resource is deleted, restore the snapshot.",
+            "If removal is approved, detach only after human review.",
+            "The resource should not be terminated automatically.",
+            "Deletion would require explicit human approval.",
+            "No automatic remediation occurred.",
+            "The resource remains unchanged.",
+            "Recommend deletion only after human approval.",
+            "If rollback is needed after an approved deletion, restore the snapshot.",
+        )
+        for text in accepted:
+            with self.subTest(text=text):
+                self.assertFalse(contains_affirmative_destructive_execution_claim(text))
+                CurrentAIVerdict(
+                    verdict="QUARANTINE",
+                    confidence_score=50,
+                    evidence_summary=text,
+                    blast_radius="Review required.",
+                    recommended_action="Require human review.",
+                    rollback_plan="Restore snapshot if needed.",
+                    human_review_required=True,
+                )
+
+    def test_destructive_execution_detector_rejects_affirmative_execution_claims(self):
+        rejected = (
+            "The resource was deleted.",
+            "We deleted the volume.",
+            "The instance has been terminated.",
+            "The Elastic IP was released.",
+            "The volume was detached.",
+            "The database was stopped.",
+            "The resource was removed.",
+            "The action was taken automatically.",
+            "We terminated the instance.",
+            "The remediation was executed.",
+        )
+        for text in rejected:
+            with self.subTest(text=text):
+                self.assertTrue(contains_affirmative_destructive_execution_claim(text))
+                with self.assertRaises(ValueError):
+                    CurrentAIVerdict(
+                        verdict="QUARANTINE",
+                        confidence_score=50,
+                        evidence_summary=text,
+                        blast_radius="Review required.",
+                        recommended_action="Require human review.",
+                        rollback_plan="Restore snapshot if needed.",
+                        human_review_required=True,
+                    )
 
 
 class P4OrchestrationAndApiTests(unittest.TestCase):
@@ -463,6 +588,55 @@ class P4OrchestrationAndApiTests(unittest.TestCase):
         text = json.dumps(response.json())
         self.assertNotIn("DATABASE_URL", text)
         self.assertNotIn("Bearer", text)
+
+    def test_api_provider_failure_returns_fixed_public_message(self):
+        class SecretFailAgent:
+            def __init__(self, message: str) -> None:
+                self.message = message
+
+            def analyze_resource(self, resource_key: str) -> None:
+                raise RuntimeError(self.message)
+
+        secret_messages = (
+            "Bearer topsecret",
+            "postgresql://user:password@example.invalid/db",
+            "AWS_SECRET_ACCESS_KEY=supersecret",
+            "AWS_SESSION_TOKEN=sessionsecret",
+            "ORPHANPROOF_MCP_BEARER_TOKEN=mcpsecret",
+            "ORPHANPROOF_MCP_CLUSTER_ID=cluster-secret",
+        )
+        forbidden_fragments = (
+            "Bearer",
+            "topsecret",
+            "postgresql://",
+            "postgres://",
+            "example.invalid",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "supersecret",
+            "sessionsecret",
+            "ORPHANPROOF_MCP_BEARER_TOKEN",
+            "ORPHANPROOF_MCP_CLUSTER_ID",
+            "mcpsecret",
+            "cluster-secret",
+        )
+        for secret_message in secret_messages:
+            with self.subTest(secret_message=secret_message):
+                client = TestClient(
+                    create_app(
+                        repository=FakeMemoryRepository(),
+                        agent=SecretFailAgent(secret_message),
+                        settings=Settings(database_url=None),
+                    )
+                )
+                response = client.post("/api/v1/resources/demo-rds-dr-standby-001/analyze")
+                self.assertEqual(response.status_code, 503)
+                payload = response.json()
+                self.assertEqual(payload["detail"]["message"], "provider failure")
+                text = json.dumps(payload)
+                self.assertNotIn(secret_message, text)
+                for fragment in forbidden_fragments:
+                    self.assertNotIn(fragment, text)
 
     def test_no_aws_remediation_clients_exist(self):
         source = "\n".join(

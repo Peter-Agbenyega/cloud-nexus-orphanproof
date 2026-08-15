@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -189,16 +190,6 @@ class CurrentAIVerdict(PhaseModel):
 
     @model_validator(mode="after")
     def reject_execution_claims(self) -> CurrentAIVerdict:
-        destructive_claims = (
-            "deleted",
-            "terminated",
-            "released",
-            "detached",
-            "modified",
-            "stopped",
-            "removed the resource",
-            "action taken",
-        )
         combined = " ".join(
             [
                 self.evidence_summary,
@@ -206,8 +197,8 @@ class CurrentAIVerdict(PhaseModel):
                 self.recommended_action,
                 self.rollback_plan,
             ]
-        ).lower()
-        if any(claim in combined for claim in destructive_claims):
+        )
+        if contains_affirmative_destructive_execution_claim(combined):
             raise ValueError("current verdict must not claim a destructive action occurred")
         return self
 
@@ -224,6 +215,68 @@ class SimilarHistoricalDecision(PhaseModel):
     recommended_action: str
     blast_radius: str
     rollback_plan: str
+
+
+_DESTRUCTIVE_VERBS = (
+    "deleted",
+    "terminated",
+    "released",
+    "detached",
+    "modified",
+    "stopped",
+    "removed",
+)
+_RESOURCE_WORDS = (
+    "resource",
+    "volume",
+    "instance",
+    "elastic ip",
+    "address",
+    "database",
+    "standby",
+    "allocation",
+)
+_SAFE_PREFIXES = (
+    "no ",
+    "if ",
+    "when ",
+    "should ",
+    "would ",
+    "deletion would ",
+    "removal would ",
+)
+_REMEDIATION_EXECUTED_PATTERN = re.compile(
+    r"\b(?:the\s+)?remediation\s+(?:has\s+been|was)\s+executed\b"
+)
+
+
+def contains_affirmative_destructive_execution_claim(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text.lower())
+    sentences = [
+        sentence.strip() for sentence in re.split(r"[.;!?]\s*", normalized) if sentence.strip()
+    ]
+    actor_pattern = re.compile(
+        rf"\b(?:we|i)\s+(?:have\s+|already\s+)?(?:{'|'.join(_DESTRUCTIVE_VERBS)})\b"
+    )
+    passive_pattern = re.compile(
+        rf"\b(?:the\s+)?(?:{'|'.join(_RESOURCE_WORDS)})\s+"
+        rf"(?:has\s+been|was)\s+(?:{'|'.join(_DESTRUCTIVE_VERBS)})\b"
+    )
+    automatic_action_pattern = re.compile(r"\baction\s+was\s+taken\s+automatically\b")
+    for sentence in sentences:
+        if sentence.startswith(_SAFE_PREFIXES):
+            continue
+        if " not " in sentence or " not be " in sentence or " not been " in sentence:
+            continue
+        if actor_pattern.search(sentence):
+            return True
+        if passive_pattern.search(sentence):
+            return True
+        if automatic_action_pattern.search(sentence):
+            return True
+        if _REMEDIATION_EXECUTED_PATTERN.search(sentence):
+            return True
+    return False
 
 
 class ManagedMcpCapabilityReport(PhaseModel):

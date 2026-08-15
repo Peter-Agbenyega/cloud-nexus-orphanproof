@@ -177,17 +177,4 @@ app = create_app()
 
 
 def _sanitize_api_error(exc: Exception) -> str:
-    text = str(exc).splitlines()[0][:160]
-    for marker in (
-        "DATABASE_URL",
-        "postgresql://",
-        "postgres://",
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "Bearer ",
-        "ORPHANPROOF_MCP_BEARER_TOKEN",
-        "ORPHANPROOF_MCP_CLUSTER_ID",
-    ):
-        text = text.replace(marker, "[REDACTED]")
-    return text or "provider failure"
+    return "provider failure"
