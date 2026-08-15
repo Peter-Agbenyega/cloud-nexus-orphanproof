@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 
 class ResourceType(StrEnum):
@@ -163,6 +171,138 @@ class MemoryContext(PhaseModel):
             "current AI verdict generation",
         ]
     )
+
+
+class MemoryTransport(StrEnum):
+    DIRECT_COCKROACHDB = "direct_cockroachdb"
+    COCKROACHDB_MANAGED_MCP = "cockroachdb_managed_mcp"
+    TEST_FAKE = "test_fake"
+
+
+class CurrentAIVerdict(PhaseModel):
+    verdict: Verdict
+    confidence_score: int = Field(ge=0, le=100)
+    evidence_summary: str = Field(min_length=1)
+    blast_radius: str = Field(min_length=1)
+    recommended_action: str = Field(min_length=1)
+    rollback_plan: str = Field(min_length=1)
+    human_review_required: Literal[True] = True
+
+    @model_validator(mode="after")
+    def reject_execution_claims(self) -> CurrentAIVerdict:
+        combined = " ".join(
+            [
+                self.evidence_summary,
+                self.blast_radius,
+                self.recommended_action,
+                self.rollback_plan,
+            ]
+        )
+        if contains_affirmative_destructive_execution_claim(combined):
+            raise ValueError("current verdict must not claim a destructive action occurred")
+        return self
+
+
+class SimilarHistoricalDecision(PhaseModel):
+    decision_id: UUID
+    resource_key: str
+    resource_type: ResourceType
+    lifecycle_state: str
+    historical_verdict: Verdict
+    distance: float = Field(ge=0)
+    similarity: float
+    evidence_summary: str
+    recommended_action: str
+    blast_radius: str
+    rollback_plan: str
+
+
+_DESTRUCTIVE_VERBS = (
+    "deleted",
+    "terminated",
+    "released",
+    "detached",
+    "modified",
+    "stopped",
+    "removed",
+)
+_RESOURCE_WORDS = (
+    "resource",
+    "volume",
+    "instance",
+    "elastic ip",
+    "address",
+    "database",
+    "standby",
+    "allocation",
+)
+_SAFE_PREFIXES = (
+    "no ",
+    "if ",
+    "when ",
+    "should ",
+    "would ",
+    "deletion would ",
+    "removal would ",
+)
+_REMEDIATION_EXECUTED_PATTERN = re.compile(
+    r"\b(?:the\s+)?remediation\s+(?:has\s+been|was)\s+executed\b"
+)
+
+
+def contains_affirmative_destructive_execution_claim(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text.lower())
+    sentences = [
+        sentence.strip() for sentence in re.split(r"[.;!?]\s*", normalized) if sentence.strip()
+    ]
+    actor_pattern = re.compile(
+        rf"\b(?:we|i)\s+(?:have\s+|already\s+)?(?:{'|'.join(_DESTRUCTIVE_VERBS)})\b"
+    )
+    passive_pattern = re.compile(
+        rf"\b(?:the\s+)?(?:{'|'.join(_RESOURCE_WORDS)})\s+"
+        rf"(?:has\s+been|was)\s+(?:{'|'.join(_DESTRUCTIVE_VERBS)})\b"
+    )
+    automatic_action_pattern = re.compile(r"\baction\s+was\s+taken\s+automatically\b")
+    for sentence in sentences:
+        if sentence.startswith(_SAFE_PREFIXES):
+            continue
+        if " not " in sentence or " not be " in sentence or " not been " in sentence:
+            continue
+        if actor_pattern.search(sentence):
+            return True
+        if passive_pattern.search(sentence):
+            return True
+        if automatic_action_pattern.search(sentence):
+            return True
+        if _REMEDIATION_EXECUTED_PATTERN.search(sentence):
+            return True
+    return False
+
+
+class ManagedMcpCapabilityReport(PhaseModel):
+    provider: Literal["cockroachdb_cloud_managed_mcp"] = "cockroachdb_cloud_managed_mcp"
+    configured: bool
+    connected: bool
+    read_only_policy: Literal[True] = True
+    allowed_tools: list[str]
+    write_tools_allowed: Literal[False] = False
+    error: str | None = None
+
+
+class P4AnalysisResponse(PhaseModel):
+    resource: ResourceDetail
+    current_ai_verdict: CurrentAIVerdict
+    similar_historical_decisions: list[SimilarHistoricalDecision]
+    evidence_signals: EvidenceSignals
+    memory_transport: MemoryTransport
+    embedding_model: str
+    reasoning_model: str
+    analysis_mode: Literal["ai_assisted"] = "ai_assisted"
+    ai_verdict_generated: Literal[True] = True
+    decision_persisted: Literal[False] = False
+    automatic_action_taken: Literal[False] = False
+    human_review_required: Literal[True] = True
+    vector_neighbors_used: int = Field(ge=0, le=5)
 
 
 class HealthResponse(PhaseModel):

@@ -11,17 +11,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from orphanproof import __version__
+from orphanproof.agent import OrphanProofAgent
 from orphanproof.config import Settings, get_settings
 from orphanproof.database import Database
+from orphanproof.embeddings import BedrockEmbeddingProvider
+from orphanproof.mcp_integration import CockroachManagedMcpClient
+from orphanproof.memory_provider import DirectMemoryContextProvider, ManagedMcpMemoryContextProvider
 from orphanproof.models import (
     DemoResource,
     HealthResponse,
     MemoryContext,
+    P4AnalysisResponse,
     ResourceDetail,
     ResourceSummary,
 )
+from orphanproof.reasoning import BedrockReasoningProvider
 from orphanproof.repository import MemoryRepository, MemoryRepositoryProtocol
 from orphanproof.service import InvalidPaginationError, MemoryService, ResourceNotFoundError
+from orphanproof.vector_memory import VectorMemoryRepository
 
 SERVICE_NAME = "cloud-nexus-orphanproof"
 PHASE = "P3_MEMORY_RETRIEVAL"
@@ -33,6 +40,7 @@ def _build_live_repository(settings: Settings) -> MemoryRepository:
 
 def create_app(
     repository: MemoryRepositoryProtocol | None = None,
+    agent: OrphanProofAgent | None = None,
     settings: Settings | None = None,
     now_provider: Callable[[], datetime] | None = None,
 ) -> FastAPI:
@@ -42,7 +50,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=app_settings.cors_origins,
         allow_credentials=False,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
@@ -53,6 +61,32 @@ def create_app(
 
     def get_service(repo: MemoryRepositoryProtocol = Depends(get_repository)) -> MemoryService:
         return MemoryService(repo, now_provider=now_provider)
+
+    def get_agent(repo: MemoryRepositoryProtocol = Depends(get_repository)) -> OrphanProofAgent:
+        if agent is not None:
+            return agent
+        database = Database(settings=app_settings)
+        if app_settings.mcp_enabled:
+            if not app_settings.mcp_is_configured():
+                raise RuntimeError("MCP mode is enabled but MCP runtime auth is not configured")
+            memory_provider = ManagedMcpMemoryContextProvider(
+                CockroachManagedMcpClient(app_settings),
+                now_provider=now_provider,
+            )
+        else:
+            memory_provider = DirectMemoryContextProvider(repo, now_provider=now_provider)
+        return OrphanProofAgent(
+            memory_provider=memory_provider,
+            embedding_provider=BedrockEmbeddingProvider(
+                model_id=app_settings.bedrock_embedding_model,
+                region_name=app_settings.aws_region,
+            ),
+            vector_repository=VectorMemoryRepository(database),
+            reasoning_provider=BedrockReasoningProvider(
+                model_id=app_settings.bedrock_reasoning_model,
+                region_name=app_settings.aws_region,
+            ),
+        )
 
     @app.exception_handler(ResourceNotFoundError)
     async def resource_not_found_handler(_request: Any, exc: ResourceNotFoundError) -> JSONResponse:
@@ -65,7 +99,7 @@ def create_app(
     async def runtime_error_handler(_request: Any, _exc: RuntimeError) -> JSONResponse:
         return JSONResponse(
             status_code=503,
-            content={"detail": {"message": "service is not configured for live database access"}},
+            content={"detail": {"message": "service provider is not configured or unavailable"}},
         )
 
     @app.get("/health", response_model=HealthResponse)
@@ -108,6 +142,21 @@ def create_app(
     ) -> MemoryContext:
         return service.get_memory_context(resource_key)
 
+    @app.post("/api/v1/resources/{resource_key}/analyze", response_model=P4AnalysisResponse)
+    def analyze_resource(
+        resource_key: str,
+        analysis_agent: OrphanProofAgent = Depends(get_agent),
+    ) -> P4AnalysisResponse:
+        try:
+            return analysis_agent.analyze_resource(resource_key)
+        except ResourceNotFoundError:
+            raise
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"message": _sanitize_api_error(exc)},
+            ) from exc
+
     @app.get("/api/v1/demo")
     def get_demo(service: MemoryService = Depends(get_service)) -> dict[str, Any]:
         demo = service.get_demo_links()
@@ -120,7 +169,12 @@ def create_app(
     app.dependency_overrides_provider = app
     app.state.get_repository_dependency = get_repository
     app.state.get_service_dependency = get_service
+    app.state.get_agent_dependency = get_agent
     return app
 
 
 app = create_app()
+
+
+def _sanitize_api_error(exc: Exception) -> str:
+    return "provider failure"

@@ -6,7 +6,7 @@ Cloud teams often find AWS resources that look unused: unattached EBS volumes, i
 
 Cloud Nexus OrphanProof is a read-only FinOps and cloud safety assistant under active development. It is designed to combine synthetic AWS resource evidence with persistent operational memory, explain why a resource exists, compare current signals against historical context, and produce a human-reviewable verdict before any remediation decision is made.
 
-Phase P1 is implemented and live-verified for the database schema foundation. Phase P2 synthetic persistent-memory data ingestion is implemented and live-verified. The broader application, cloud integrations, reasoning workflow, dashboard, and human approval interface are still planned or not yet implemented.
+Phase P1 is implemented and live-verified for the database schema foundation. Phase P2 synthetic persistent-memory data ingestion is implemented and live-verified. Phase P3 local read-only memory retrieval is implemented. Phase P4 agentic memory integration is implemented locally with unit-test fakes; live CockroachDB vector loading, Bedrock inference, and Managed MCP verification must be run with local credentials before being marked live-verified.
 
 ## Implemented Phase P1 Foundation
 
@@ -57,13 +57,34 @@ The local Phase P3 API foundation is implemented for read-only memory retrieval:
 
 Local API documentation is available in `docs/API.md`.
 
-## Planned Sponsor Integrations
+## Implemented Phase P4 Agentic Memory Foundation
 
-- CockroachDB Managed MCP integration: planned
-- Amazon Bedrock reasoning: planned
+Phase P4 adds the local application intelligence path:
+
+- deterministic canonical memory text for historical decisions
+- Amazon Bedrock Titan Text Embeddings V2 provider for `VECTOR(1024)` embeddings
+- scoped `orphanproof.decision_embeddings` persistence
+- CockroachDB cosine vector similarity search using `<=>`
+- CockroachDB Cloud Managed MCP read-only client and memory-provider abstraction
+- Amazon Bedrock Nova Lite structured reasoning provider
+- strict Pydantic validation for current AI verdicts
+- P4 orchestrator and `POST /api/v1/resources/{resource_key}/analyze`
+- safe indexing, MCP verification, and two-story demo scripts
+
+P4 preserves P3 evidence-only semantics. `/memory-context` still returns `analysis_mode = evidence_only` and does not generate a current AI verdict.
+
+P4 does not automatically delete, stop, detach, release, terminate, resize, or otherwise mutate AWS resources. A `REMOVE` verdict is only a recommendation and always requires human review. P4 does not persist current AI decisions to `orphanproof.decisions`.
+
+Live verification status for P4 is not claimed until the local live scripts complete successfully.
+
+## Sponsor Integrations
+
+- CockroachDB Managed MCP integration: implemented locally; live verification pending local auth
+- Amazon Bedrock Titan Text Embeddings V2: implemented locally; live invocation pending local AWS auth
+- Amazon Bedrock Nova Lite reasoning: implemented locally; live invocation pending local AWS auth
 - AWS Lambda and API Gateway: planned
 - Amazon S3 Remediation Passports: planned
-- CockroachDB Distributed Vector Indexing: Phase P1 schema support is implemented; retrieval integration is planned
+- CockroachDB Distributed Vector Indexing: schema and retrieval integration implemented; live vector loading pending local database auth
 
 ## Supported MVP Resource Types
 
@@ -90,8 +111,7 @@ For hackathon demonstrations, OrphanProof uses synthetic AWS resource evidence b
 Current data status:
 
 - Phase P2 synthetic persistent-memory dataset: implemented and live-verified
-- Synthetic AWS sample dataset: planned for post-P2 expansion
-- Agent verdict workflow: not yet implemented
+- Phase P4 agent verdict workflow: implemented locally; live Bedrock verification pending
 - React dashboard: not yet implemented
 - Human approval interface: not yet implemented
 
