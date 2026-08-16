@@ -305,6 +305,22 @@ class P4AnalysisResponse(PhaseModel):
     vector_neighbors_used: int = Field(ge=0, le=5)
 
 
+class VectorMemoryResponse(PhaseModel):
+    resource_key: str
+    embedding_model: str
+    memory_transport: MemoryTransport
+    similar_historical_decisions: list[SimilarHistoricalDecision]
+    evidence_signals: EvidenceSignals
+    analysis_mode: Literal["vector_memory"] = "vector_memory"
+    ai_verdict_generated: Literal[False] = False
+    current_ai_verdict: Literal[None] = None
+    decision_persisted: Literal[False] = False
+    automatic_action_taken: Literal[False] = False
+    human_review_required: Literal[True] = True
+    vector_neighbors_used: int = Field(ge=0, le=5)
+    safety_note: str = "Historical vector memory is evidence for human review, not an action."
+
+
 class HealthResponse(PhaseModel):
     status: str
     service: str
@@ -312,6 +328,7 @@ class HealthResponse(PhaseModel):
     phase: str
     environment: str
     database_mode: str
+    deployment_platform: str = "local"
     analysis_mode: Literal["evidence_only"] = "evidence_only"
     ai_verdict_generated: Literal[False] = False
 

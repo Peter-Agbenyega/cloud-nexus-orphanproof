@@ -18,6 +18,7 @@ from orphanproof.models import (
     ResourceDetail,
     ResourceException,
     ResourceSummary,
+    VectorMemoryResponse,
     Verdict,
 )
 from orphanproof.repository import MAX_RESOURCE_LIMIT, MemoryRepositoryProtocol
@@ -126,6 +127,22 @@ class MemoryService:
                 },
             ],
         }
+
+    def build_vector_memory_response(
+        self,
+        context: MemoryContext,
+        embedding_model: str,
+        memory_transport: str,
+        similar_historical_decisions: list[Any],
+    ) -> VectorMemoryResponse:
+        return VectorMemoryResponse(
+            resource_key=context.resource.resource_key,
+            embedding_model=embedding_model,
+            memory_transport=memory_transport,
+            similar_historical_decisions=similar_historical_decisions,
+            evidence_signals=context.evidence_signals,
+            vector_neighbors_used=len(similar_historical_decisions),
+        )
 
     @staticmethod
     def _validate_pagination(limit: int, offset: int) -> None:

@@ -1,6 +1,6 @@
 # Cloud Nexus OrphanProof API
 
-Phase P3 implements a local, read-only FastAPI memory retrieval service. Phase P4 adds an AI-assisted analysis endpoint that combines persistent memory, Titan embeddings, CockroachDB vector retrieval, and Nova reasoning when live providers are configured.
+Phase P3 implements a local, read-only FastAPI memory retrieval service. Phase P4 adds an AI-assisted analysis endpoint that combines persistent memory, Bedrock embeddings, CockroachDB vector retrieval, and Nova reasoning when live providers are configured. Phase P6 adds a judge-facing Lambda-compatible demo endpoint that uses deterministic local embeddings and CockroachDB vector memory without invoking Bedrock.
 
 The P3 memory-context endpoint does not generate an AI verdict. Historical seed decisions are returned as historical evidence only.
 
@@ -17,9 +17,9 @@ The P3 memory-context endpoint does not generate an AI verdict. Historical seed 
 ## Still Planned
 
 - Live Managed MCP verification
-- Live Bedrock verification
+- Live Bedrock reasoning verification
 - Dashboard
-- AWS deployment
+- Full dashboard deployment
 - Human approval workflow UI
 
 No automatic deletion, release, mutation, or remediation workflow exists in P3 or P4.
@@ -52,7 +52,17 @@ ORPHANPROOF_MCP_ENABLED=false
 ORPHANPROOF_MCP_URL=https://cockroachlabs.cloud/mcp
 ```
 
+`ORPHANPROOF_BEDROCK_EMBEDDING_MODEL` supports `local.feature-hash-v1`, `amazon.titan-embed-text-v2:0`, `cohere.embed-v4:0`, `us.cohere.embed-v4:0`, and `global.cohere.embed-v4:0`. All paths must return exactly 1024-dimensional embeddings for the existing CockroachDB `VECTOR(1024)` schema. The public Lambda demo should use `local.feature-hash-v1` because live Bedrock embedding and reasoning calls were provider-throttled during deadline testing.
+
 Live database use requires `DATABASE_URL`, but the value must be placed only in the ignored local `.env` file or a managed secret service. Obtain the connection value from the approved CockroachDB connection workflow. Never copy the value into source code, documentation, screenshots, logs, terminal output, or Git history.
+
+AWS Lambda deployment should use AWS Systems Manager Parameter Store SecureString for the database URL. The Lambda receives only `ORPHANPROOF_DATABASE_URL_PARAMETER_NAME`; the application resolves the SecureString at runtime and does not log the value.
+
+The public Lambda judge demo should set `ORPHANPROOF_PUBLIC_DEMO_ONLY=true`. In that mode only two synthetic resource keys are exposed: `demo-rds-dr-standby-001` and `demo-ebs-abandoned-001`. Resource listing, detail, memory-context, and vector-memory endpoints return 404 for any other key and also return 404 if an allowlisted row is not synthetic. Public analyze is disabled and returns 404 because the public demo does not require Bedrock reasoning.
+
+Deployment uses deployment-scoped SSM SecureString parameters under `/orphanproof/prod/database-url-deployments/`. The deployment script validates the public CA, builds and validates the Lambda package, then creates a new parameter and points Lambda at that parameter. It does not overwrite the previous live database URL parameter.
+
+Database TLS root certificate resolution preserves an explicit `sslrootcert` in the URL, otherwise uses `ORPHANPROOF_DATABASE_SSLROOTCERT` for the packaged Lambda CA, otherwise uses local `~/.postgresql/root.crt` when present. The application does not force `sslrootcert=system` and does not disable verification.
 
 Managed MCP live verification also requires local `ORPHANPROOF_MCP_CLUSTER_ID` and `ORPHANPROOF_MCP_BEARER_TOKEN` values. These are intentionally omitted from `.env.example` and must never be pasted into chat, source, documentation, logs, or test fixtures.
 
@@ -84,6 +94,7 @@ Expected P3 fields include:
 
 - `phase`: `P3_MEMORY_RETRIEVAL`
 - `database_mode`: `dependency_injected`
+- `deployment_platform`: `local` or `aws_lambda`
 - `analysis_mode`: `evidence_only`
 - `ai_verdict_generated`: `false`
 
@@ -147,6 +158,8 @@ The demo endpoint states that records are synthetic, the API provides evidence o
 
 Runs the P4 AI-assisted analysis path for a known synthetic resource. This endpoint may invoke Bedrock and vector search when live providers are configured.
 
+In public-demo-only Lambda mode, this endpoint is disabled and returns 404 for all resource keys, including the two allowed synthetic demo keys.
+
 Required safety fields in successful responses:
 
 - `analysis_mode`: `ai_assisted`
@@ -162,3 +175,42 @@ curl -X POST http://127.0.0.1:8000/api/v1/resources/demo-rds-dr-standby-001/anal
 ```
 
 Provider failures return sanitized errors and must not include database URLs, AWS credentials, MCP credentials, full embeddings, raw provider responses, or stack traces.
+
+### `GET /api/v1/resources/{resource_key}/vector-memory`
+
+Runs the P6 deterministic vector-memory demo for a known synthetic resource. This endpoint retrieves current persistent memory, builds current-resource retrieval text, uses the configured embedding provider, and queries CockroachDB vector similarity for historical decisions.
+
+For the public demo, configure:
+
+```text
+ORPHANPROOF_BEDROCK_EMBEDDING_MODEL=local.feature-hash-v1
+```
+
+Successful responses include:
+
+- `analysis_mode`: `vector_memory`
+- `ai_verdict_generated`: `false`
+- `current_ai_verdict`: `null`
+- `automatic_action_taken`: `false`
+- `human_review_required`: `true`
+- `embedding_model`: provider provenance, normally `local.feature-hash-v1`
+- `memory_transport`: `direct_cockroachdb`
+- `similar_historical_decisions`: historical nearest neighbors only
+
+The nearest historical verdict is not a newly generated current AI recommendation.
+
+Vector retrieval is scoped by the configured `embedding_model`. Historical decision embeddings from Titan, Cohere, and `local.feature-hash-v1` are never compared with vectors from another model. If no stored rows exist for the configured model, vector memory fails closed instead of returning an ungrounded historical verdict.
+
+```bash
+curl http://127.0.0.1:8000/api/v1/resources/demo-rds-dr-standby-001/vector-memory
+```
+
+### `GET /`
+
+Returns the judge-facing HTML demo page. The page calls the vector-memory endpoint for the RDS and EBS demo resources and shows the safety banner:
+
+```text
+OrphanProof recommends and explains.
+It never deletes cloud resources automatically.
+Human review required.
+```

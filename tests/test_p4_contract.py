@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,10 +18,13 @@ from orphanproof.api import create_app
 from orphanproof.config import Settings
 from orphanproof.embeddings import (
     EMBEDDING_DIMENSIONS,
+    LOCAL_FEATURE_HASH_MODEL,
     BedrockEmbeddingProvider,
     EmbeddingProviderError,
+    LocalFeatureHashEmbeddingProvider,
     build_canonical_decision_memory_text,
     build_current_resource_retrieval_text,
+    create_embedding_provider,
 )
 from orphanproof.mcp_integration import (
     CockroachManagedMcpClient,
@@ -45,6 +49,7 @@ from orphanproof.reasoning import (
 from orphanproof.service import MemoryService, ResourceNotFoundError
 from orphanproof.vector_memory import (
     DecisionEmbeddingWriter,
+    VectorMemoryError,
     VectorMemoryRepository,
     validate_vector_limit,
     vector_literal,
@@ -62,13 +67,16 @@ class FakeBody:
 
 
 class FakeEmbeddingClient:
-    def __init__(self, vector: list[float] | None = None) -> None:
+    def __init__(
+        self, vector: list[float] | None = None, payload: dict[str, Any] | None = None
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.vector = vector or [0.01] * EMBEDDING_DIMENSIONS
+        self.payload = payload
 
     def invoke_model(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(kwargs)
-        return {"body": FakeBody({"embedding": self.vector})}
+        return {"body": FakeBody(self.payload or {"embedding": self.vector})}
 
 
 class FakeReasoningClient:
@@ -88,6 +96,7 @@ class FakeConnection:
         self.executed: list[tuple[str, tuple[Any, ...]]] = []
         self.committed = False
         self.rowcount = 1
+        self.last_params: tuple[Any, ...] = ()
 
     def __enter__(self) -> FakeConnection:
         return self
@@ -99,9 +108,12 @@ class FakeConnection:
         return self
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+        self.last_params = params
         self.executed.append((sql, params))
 
     def fetchall(self) -> list[dict[str, Any]]:
+        if self.rows and "embedding_model" in self.rows[0] and len(self.last_params) >= 3:
+            return [row for row in self.rows if row["embedding_model"] == self.last_params[2]]
         return self.rows
 
     def commit(self) -> None:
@@ -121,23 +133,33 @@ class FakeEmbeddingProvider:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.query_calls: list[str] = []
 
     def embed_text(self, text: str) -> list[float]:
         self.calls.append(text)
+        return [0.01] * EMBEDDING_DIMENSIONS
+
+    def embed_document(self, text: str) -> list[float]:
+        self.calls.append(text)
+        return [0.01] * EMBEDDING_DIMENSIONS
+
+    def embed_query(self, text: str) -> list[float]:
+        self.query_calls.append(text)
         return [0.01] * EMBEDDING_DIMENSIONS
 
 
 class FakeVectorRepository:
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail
-        self.calls: list[tuple[list[float], int]] = []
+        self.calls: list[tuple[list[float], str, int]] = []
 
     def find_similar_decisions(
         self,
         query_embedding: list[float],
+        embedding_model: str,
         limit: int = 3,
     ) -> list[SimilarHistoricalDecision]:
-        self.calls.append((query_embedding, limit))
+        self.calls.append((query_embedding, embedding_model, limit))
         if self.fail:
             raise RuntimeError("vector provider failed")
         return [
@@ -183,6 +205,9 @@ class FakeReasoningProvider:
 
 
 class P4EmbeddingTests(unittest.TestCase):
+    def cosine(self, left: list[float], right: list[float]) -> float:
+        return sum(a * b for a, b in zip(left, right, strict=True))
+
     def test_canonical_memory_text_is_deterministic_and_semantic(self):
         context = MemoryService(FakeMemoryRepository()).get_memory_context(
             "demo-rds-dr-standby-001"
@@ -204,13 +229,59 @@ class P4EmbeddingTests(unittest.TestCase):
     def test_titan_request_and_dimension_validation(self):
         client = FakeEmbeddingClient()
         provider = BedrockEmbeddingProvider(client=client, model_id="amazon.titan-embed-text-v2:0")
-        vector = provider.embed_text("stable memory")
+        vector = provider.embed_document("stable memory")
         self.assertEqual(len(vector), 1024)
         body = json.loads(client.calls[0]["body"])
         self.assertEqual(client.calls[0]["modelId"], "amazon.titan-embed-text-v2:0")
         self.assertEqual(body["dimensions"], 1024)
         self.assertTrue(body["normalize"])
         self.assertEqual(body["inputText"], "stable memory")
+
+    def test_cohere_document_request_and_response_validation(self):
+        client = FakeEmbeddingClient(payload={"embeddings": [[0.01] * EMBEDDING_DIMENSIONS]})
+        provider = BedrockEmbeddingProvider(client=client, model_id="cohere.embed-v4:0")
+        vector = provider.embed_document("stable memory")
+        body = json.loads(client.calls[0]["body"])
+        self.assertEqual(len(vector), 1024)
+        self.assertEqual(client.calls[0]["modelId"], "cohere.embed-v4:0")
+        self.assertEqual(body["input_type"], "search_document")
+        self.assertEqual(body["texts"], ["stable memory"])
+        self.assertEqual(body["embedding_types"], ["float"])
+        self.assertEqual(body["output_dimension"], 1024)
+
+    def test_cohere_inference_profile_ids_use_cohere_document_payload(self):
+        for model_id in ("us.cohere.embed-v4:0", "global.cohere.embed-v4:0"):
+            with self.subTest(model_id=model_id):
+                client = FakeEmbeddingClient(
+                    payload={"embeddings": {"float": [[0.01] * EMBEDDING_DIMENSIONS]}}
+                )
+                provider = BedrockEmbeddingProvider(client=client, model_id=model_id)
+                vector = provider.embed_document("profile memory")
+                body = json.loads(client.calls[0]["body"])
+                self.assertEqual(len(vector), 1024)
+                self.assertEqual(client.calls[0]["modelId"], model_id)
+                self.assertEqual(body["input_type"], "search_document")
+                self.assertEqual(body["texts"], ["profile memory"])
+                self.assertEqual(body["embedding_types"], ["float"])
+                self.assertEqual(body["output_dimension"], 1024)
+
+    def test_cohere_query_request_uses_search_query(self):
+        for model_id in (
+            "cohere.embed-v4:0",
+            "us.cohere.embed-v4:0",
+            "global.cohere.embed-v4:0",
+        ):
+            with self.subTest(model_id=model_id):
+                client = FakeEmbeddingClient(
+                    payload={"embeddings": {"float": [[0.01] * EMBEDDING_DIMENSIONS]}}
+                )
+                provider = BedrockEmbeddingProvider(client=client, model_id=model_id)
+                vector = provider.embed_query("current evidence")
+                body = json.loads(client.calls[0]["body"])
+                self.assertEqual(len(vector), 1024)
+                self.assertEqual(client.calls[0]["modelId"], model_id)
+                self.assertEqual(body["input_type"], "search_query")
+                self.assertEqual(body["texts"], ["current evidence"])
 
     def test_wrong_size_and_malformed_embedding_response_rejected(self):
         with self.assertRaises(EmbeddingProviderError):
@@ -223,9 +294,97 @@ class P4EmbeddingTests(unittest.TestCase):
         with self.assertRaises(EmbeddingProviderError):
             BedrockEmbeddingProvider(client=Malformed()).embed_text("x")
 
+        for model_id in (
+            "cohere.embed-v4:0",
+            "us.cohere.embed-v4:0",
+            "global.cohere.embed-v4:0",
+        ):
+            with self.subTest(model_id=model_id):
+                cohere_short = FakeEmbeddingClient(payload={"embeddings": [[0.1]]})
+                with self.assertRaises(EmbeddingProviderError):
+                    BedrockEmbeddingProvider(
+                        client=cohere_short,
+                        model_id=model_id,
+                    ).embed_document("x")
+
+                cohere_malformed = FakeEmbeddingClient(payload={"not_embeddings": []})
+                with self.assertRaises(EmbeddingProviderError):
+                    BedrockEmbeddingProvider(
+                        client=cohere_malformed,
+                        model_id=model_id,
+                    ).embed_query("x")
+
     def test_provider_import_makes_no_boto3_client(self):
         module = importlib.import_module("orphanproof.embeddings")
         self.assertTrue(hasattr(module, "BedrockEmbeddingProvider"))
+
+    def test_local_feature_hash_vector_length_and_determinism(self):
+        provider = LocalFeatureHashEmbeddingProvider()
+        first = provider.embed_document("Abandoned EBS volume migration rollback evidence")
+        second = provider.embed_document("Abandoned EBS volume migration rollback evidence")
+        self.assertEqual(len(first), EMBEDDING_DIMENSIONS)
+        self.assertEqual(first, second)
+
+    def test_local_feature_hash_does_not_use_builtin_hash(self):
+        source = (REPO_ROOT / "src" / "orphanproof" / "embeddings.py").read_text(encoding="utf-8")
+        self.assertNotIn("hash(", source)
+        self.assertIn("sha256", source)
+
+    def test_local_feature_hash_normalizes_non_empty_and_handles_empty(self):
+        provider = LocalFeatureHashEmbeddingProvider()
+        vector = provider.embed_query("quiet rds disaster recovery standby")
+        self.assertAlmostEqual(math.sqrt(sum(value * value for value in vector)), 1.0)
+        empty = provider.embed_query("")
+        self.assertEqual(empty, [0.0] * EMBEDDING_DIMENSIONS)
+
+    def test_local_feature_hash_document_and_query_share_feature_space(self):
+        provider = LocalFeatureHashEmbeddingProvider()
+        text = "rds disaster recovery standby keep"
+        self.assertEqual(provider.embed_document(text), provider.embed_query(text))
+
+    def test_local_feature_hash_similarity_prefers_related_text(self):
+        provider = LocalFeatureHashEmbeddingProvider()
+        query = provider.embed_query("rds disaster recovery standby")
+        related = provider.embed_document("keep rds standby for disaster recovery")
+        unrelated = provider.embed_document("elastic ip customer allowlist release")
+        self.assertGreater(self.cosine(query, related), self.cosine(query, unrelated))
+
+    def test_embedding_provider_factory_selects_local_and_bedrock(self):
+        local = create_embedding_provider(LOCAL_FEATURE_HASH_MODEL)
+        self.assertIsInstance(local, LocalFeatureHashEmbeddingProvider)
+        self.assertEqual(local.model_id, LOCAL_FEATURE_HASH_MODEL)
+
+        for model_id in (
+            "amazon.titan-embed-text-v2:0",
+            "cohere.embed-v4:0",
+            "us.cohere.embed-v4:0",
+            "global.cohere.embed-v4:0",
+        ):
+            with self.subTest(model_id=model_id):
+                client = FakeEmbeddingClient(
+                    payload={"embeddings": {"float": [[0.01] * EMBEDDING_DIMENSIONS]}}
+                )
+                provider = create_embedding_provider(model_id, client=client)
+                self.assertIsInstance(provider, BedrockEmbeddingProvider)
+                self.assertEqual(provider.model_id, model_id)
+
+    def test_embedding_provider_factory_rejects_unsupported_model(self):
+        with self.assertRaises(EmbeddingProviderError):
+            create_embedding_provider("unsupported.model")
+
+    def test_local_feature_hash_makes_no_network_call(self):
+        provider = create_embedding_provider(LOCAL_FEATURE_HASH_MODEL)
+        self.assertFalse(hasattr(provider, "client"))
+        self.assertFalse(hasattr(provider, "invoke_model"))
+        with self.assertRaises(EmbeddingProviderError):
+            create_embedding_provider(LOCAL_FEATURE_HASH_MODEL, client=object())
+
+    def test_index_script_uses_configured_model_and_document_embeddings(self):
+        source = (REPO_ROOT / "scripts" / "p4_index_decisions.py").read_text(encoding="utf-8")
+        self.assertIn("bedrock_embedding_model", source)
+        self.assertIn("aws_region", source)
+        self.assertIn("embed_document", source)
+        self.assertIn("create_embedding_provider", source)
 
 
 class P4VectorTests(unittest.TestCase):
@@ -255,14 +414,102 @@ class P4VectorTests(unittest.TestCase):
             }
         ]
         database = FakeDatabase(rows)
-        result = VectorMemoryRepository(database).find_similar_decisions([0.0] * 1024)
+        result = VectorMemoryRepository(database).find_similar_decisions(
+            [0.0] * 1024,
+            embedding_model=LOCAL_FEATURE_HASH_MODEL,
+        )
         sql, params = database.connection.executed[0]
         self.assertIn("<=>", sql)
+        self.assertIn("WHERE de.embedding_model = %s", sql)
         self.assertIn("%s::VECTOR(1024)", sql)
         self.assertNotRegex(sql.upper(), r"\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE)\b")
-        self.assertEqual(len(params), 4)
+        self.assertEqual(len(params), 5)
+        self.assertEqual(params[2], LOCAL_FEATURE_HASH_MODEL)
         self.assertEqual(result[0].historical_verdict, "KEEP")
         self.assertFalse(hasattr(result[0], "embedding"))
+
+    def test_similarity_repository_fails_closed_without_matching_model_rows(self):
+        database = FakeDatabase([])
+        for model_id in (
+            LOCAL_FEATURE_HASH_MODEL,
+            "amazon.titan-embed-text-v2:0",
+            "cohere.embed-v4:0",
+        ):
+            with self.subTest(model_id=model_id):
+                with self.assertRaises(VectorMemoryError):
+                    VectorMemoryRepository(database).find_similar_decisions(
+                        [0.0] * 1024,
+                        embedding_model=model_id,
+                    )
+
+    def test_similarity_repository_isolates_provider_model_rows(self):
+        rows = [
+            {
+                "decision_id": UUID("40000000-0000-4000-8000-000000000001"),
+                "resource_key": "demo-rds-dr-standby-001",
+                "resource_type": "RDS_INSTANCE",
+                "lifecycle_state": "STANDBY",
+                "historical_verdict": "KEEP",
+                "distance": 0.2,
+                "similarity": 0.8,
+                "evidence_summary": "local row",
+                "recommended_action": "a",
+                "blast_radius": "b",
+                "rollback_plan": "r",
+                "embedding_model": LOCAL_FEATURE_HASH_MODEL,
+            },
+            {
+                "decision_id": UUID("40000000-0000-4000-8000-000000000002"),
+                "resource_key": "demo-ebs-abandoned-001",
+                "resource_type": "EBS_VOLUME",
+                "lifecycle_state": "UNATTACHED",
+                "historical_verdict": "QUARANTINE",
+                "distance": 0.3,
+                "similarity": 0.7,
+                "evidence_summary": "titan row",
+                "recommended_action": "a",
+                "blast_radius": "b",
+                "rollback_plan": "r",
+                "embedding_model": "amazon.titan-embed-text-v2:0",
+            },
+        ]
+
+        local_result = VectorMemoryRepository(FakeDatabase(rows)).find_similar_decisions(
+            [0.0] * 1024,
+            embedding_model=LOCAL_FEATURE_HASH_MODEL,
+        )
+        titan_result = VectorMemoryRepository(FakeDatabase(rows)).find_similar_decisions(
+            [0.0] * 1024,
+            embedding_model="amazon.titan-embed-text-v2:0",
+        )
+
+        self.assertEqual([row.evidence_summary for row in local_result], ["local row"])
+        self.assertEqual([row.evidence_summary for row in titan_result], ["titan row"])
+        with self.assertRaises(VectorMemoryError):
+            VectorMemoryRepository(FakeDatabase(rows[:1])).find_similar_decisions(
+                [0.0] * 1024,
+                embedding_model="amazon.titan-embed-text-v2:0",
+            )
+        with self.assertRaises(VectorMemoryError):
+            VectorMemoryRepository(FakeDatabase(rows[1:])).find_similar_decisions(
+                [0.0] * 1024,
+                embedding_model="cohere.embed-v4:0",
+            )
+
+    def test_agent_passes_provider_model_id_to_vector_repository(self):
+        embedding_provider = FakeEmbeddingProvider()
+        embedding_provider.model_id = LOCAL_FEATURE_HASH_MODEL
+        vector_repository = FakeVectorRepository()
+        agent = OrphanProofAgent(
+            memory_provider=DirectMemoryContextProvider(FakeMemoryRepository()),
+            embedding_provider=embedding_provider,
+            vector_repository=vector_repository,
+            reasoning_provider=FakeReasoningProvider(verdict="KEEP"),
+        )
+
+        agent.analyze_resource("demo-rds-dr-standby-001")
+
+        self.assertEqual(vector_repository.calls[0][1], LOCAL_FEATURE_HASH_MODEL)
 
     def test_embedding_writer_scoped_to_decision_embeddings(self):
         database = FakeDatabase()
@@ -347,6 +594,16 @@ class P4McpTests(unittest.TestCase):
         self.assertTrue(is_tool_allowed("get_table_schema"))
         self.assertFalse(is_tool_allowed("insert_rows"))
         self.assertFalse(is_tool_allowed("create_database"))
+
+    def test_mcp_headers_use_documented_cluster_header_name(self):
+        settings = Settings(
+            mcp_enabled=True,
+            mcp_cluster_id="fake-cluster-for-test",
+            mcp_bearer_token="fake-token-for-test",
+        )
+        headers = CockroachManagedMcpClient(settings)._headers()
+        self.assertEqual(set(headers), {"Authorization", "mcp-cluster-id"})
+        self.assertNotIn("x-cockroach-cluster-id", headers)
 
     def test_mcp_mode_does_not_silently_fallback(self):
         class FailingMcp:
@@ -523,7 +780,14 @@ class P4OrchestrationAndApiTests(unittest.TestCase):
         )
 
     def test_agent_order_and_safe_response(self):
-        agent = self.build_agent("KEEP")
+        embedding_provider = FakeEmbeddingProvider()
+        embedding_provider.model_id = LOCAL_FEATURE_HASH_MODEL
+        agent = OrphanProofAgent(
+            memory_provider=DirectMemoryContextProvider(FakeMemoryRepository()),
+            embedding_provider=embedding_provider,
+            vector_repository=FakeVectorRepository(),
+            reasoning_provider=FakeReasoningProvider(verdict="KEEP"),
+        )
         result = agent.analyze_resource("demo-rds-dr-standby-001")
         self.assertEqual(result.analysis_mode, "ai_assisted")
         self.assertTrue(result.ai_verdict_generated)
@@ -532,6 +796,9 @@ class P4OrchestrationAndApiTests(unittest.TestCase):
         self.assertTrue(result.human_review_required)
         self.assertEqual(result.memory_transport, MemoryTransport.DIRECT_COCKROACHDB)
         self.assertEqual(result.vector_neighbors_used, 1)
+        self.assertEqual(result.embedding_model, LOCAL_FEATURE_HASH_MODEL)
+        self.assertEqual(len(embedding_provider.query_calls), 1)
+        self.assertEqual(embedding_provider.calls, [])
 
     def test_unknown_resource_and_provider_failures(self):
         with self.assertRaises(ResourceNotFoundError):

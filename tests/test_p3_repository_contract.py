@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import ast
 import inspect
+import os
 import re
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import orphanproof.repository as repository
+from orphanproof.database import Database
 from orphanproof.repository import (
     MemoryRepository,
     ReadOnlyQueryError,
@@ -150,6 +153,76 @@ class P3RepositoryContractTests(unittest.TestCase):
     def test_no_connection_opens_during_module_import(self):
         self.assertNotIn("Database(", self.source.split("class MemoryRepository")[0])
         self.assertNotIn("connect()", self.source.split("class MemoryRepository")[0])
+
+    def test_database_preserves_explicit_url_sslrootcert(self):
+        database = Database(
+            database_url=(
+                "postgresql://user@example.invalid:26257/orphanproof"
+                "?sslmode=verify-full&sslrootcert=/already/configured.crt"
+            )
+        )
+        self.assertIn("sslrootcert=/already/configured.crt", database.database_url)
+
+    def test_database_prefers_configured_lambda_public_ca_path(self):
+        old_value = os.environ.get("ORPHANPROOF_DATABASE_SSLROOTCERT")
+        os.environ["ORPHANPROOF_DATABASE_SSLROOTCERT"] = "/var/task/cockroach-ca.crt"
+        try:
+            with patch("orphanproof.database.os.path.exists", return_value=True):
+                database = Database(
+                    database_url=(
+                        "postgresql://user@example.invalid:26257/orphanproof?sslmode=verify-full"
+                    )
+                )
+            self.assertIn("sslrootcert=/var/task/cockroach-ca.crt", database.database_url)
+        finally:
+            if old_value is None:
+                os.environ.pop("ORPHANPROOF_DATABASE_SSLROOTCERT", None)
+            else:
+                os.environ["ORPHANPROOF_DATABASE_SSLROOTCERT"] = old_value
+
+    def test_database_uses_local_cockroach_ca_when_available(self):
+        old_value = os.environ.pop("ORPHANPROOF_DATABASE_SSLROOTCERT", None)
+        try:
+            with (
+                patch(
+                    "orphanproof.database.os.path.expanduser",
+                    return_value="/tmp/test-home/.postgresql/root.crt",
+                ),
+                patch("orphanproof.database.os.path.exists", return_value=True),
+            ):
+                database = Database(
+                    database_url=(
+                        "postgresql://user@example.invalid:26257/orphanproof?sslmode=verify-ca"
+                    )
+                )
+                database_url = database.database_url
+            self.assertIn("sslrootcert=/tmp/test-home/.postgresql/root.crt", database_url)
+        finally:
+            if old_value is not None:
+                os.environ["ORPHANPROOF_DATABASE_SSLROOTCERT"] = old_value
+
+    def test_database_does_not_force_system_rootcert(self):
+        old_value = os.environ.pop("ORPHANPROOF_DATABASE_SSLROOTCERT", None)
+        try:
+            with patch("orphanproof.database.os.path.exists", return_value=False):
+                database = Database(
+                    database_url=(
+                        "postgresql://user@example.invalid:26257/orphanproof?sslmode=verify-full"
+                    )
+                )
+                database_url = database.database_url
+            self.assertNotIn("sslrootcert=system", database_url)
+            self.assertNotIn("sslrootcert=", database_url)
+        finally:
+            if old_value is not None:
+                os.environ["ORPHANPROOF_DATABASE_SSLROOTCERT"] = old_value
+
+    def test_database_does_not_weaken_disabled_sslmode(self):
+        database = Database(
+            database_url=("postgresql://user@example.invalid:26257/orphanproof?sslmode=disable")
+        )
+        self.assertNotIn("sslrootcert=system", database.database_url)
+        self.assertNotIn("sslrootcert=", database.database_url)
 
     def test_no_embeddings_or_similarity_retrieval_exists_yet(self):
         lower_source = self.source.lower()

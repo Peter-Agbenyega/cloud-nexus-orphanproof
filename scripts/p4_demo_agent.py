@@ -17,7 +17,7 @@ from apply_database_migrations import ENV_PATH, MigrationConfigError, load_datab
 from orphanproof.agent import OrphanProofAgent
 from orphanproof.config import Settings
 from orphanproof.database import Database
-from orphanproof.embeddings import BedrockEmbeddingProvider
+from orphanproof.embeddings import create_embedding_provider
 from orphanproof.memory_provider import DirectMemoryContextProvider
 from orphanproof.reasoning import BedrockReasoningProvider
 from orphanproof.repository import MemoryRepository
@@ -47,7 +47,7 @@ def main() -> int:
     repository = MemoryRepository(database)
     agent = OrphanProofAgent(
         memory_provider=DirectMemoryContextProvider(repository),
-        embedding_provider=BedrockEmbeddingProvider(
+        embedding_provider=create_embedding_provider(
             model_id=settings.bedrock_embedding_model,
             region_name=settings.aws_region,
         ),

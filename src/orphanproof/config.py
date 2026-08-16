@@ -12,6 +12,12 @@ DEFAULT_AWS_REGION = "us-east-1"
 DEFAULT_EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
 DEFAULT_REASONING_MODEL = "amazon.nova-lite-v1:0"
 DEFAULT_MCP_URL = "https://cockroachlabs.cloud/mcp"
+PUBLIC_DEMO_RESOURCE_KEYS = frozenset(
+    {
+        "demo-rds-dr-standby-001",
+        "demo-ebs-abandoned-001",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -22,6 +28,14 @@ class Settings(BaseSettings):
     database_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices("DATABASE_URL", "database_url"),
+        repr=False,
+    )
+    database_url_parameter_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "ORPHANPROOF_DATABASE_URL_PARAMETER_NAME",
+            "database_url_parameter_name",
+        ),
         repr=False,
     )
     orphanproof_env: str = Field(
@@ -35,6 +49,10 @@ class Settings(BaseSettings):
     log_level: str = Field(
         default="INFO",
         validation_alias=AliasChoices("ORPHANPROOF_LOG_LEVEL", "log_level"),
+    )
+    public_demo_only: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ORPHANPROOF_PUBLIC_DEMO_ONLY", "public_demo_only"),
     )
     aws_region: str = Field(
         default=DEFAULT_AWS_REGION,
@@ -91,16 +109,44 @@ class Settings(BaseSettings):
 
     def require_database_url(self) -> str:
         if not self.database_url:
+            if self.database_url_parameter_name:
+                return self._load_database_url_from_ssm()
             raise RuntimeError("DATABASE_URL is required for the live repository")
         return self.database_url
+
+    def _load_database_url_from_ssm(self) -> str:
+        if not self.database_url_parameter_name:
+            raise RuntimeError("database URL parameter name is required")
+        try:
+            import boto3
+
+            client = boto3.client("ssm", region_name=self.aws_region)
+            response = client.get_parameter(
+                Name=self.database_url_parameter_name,
+                WithDecryption=True,
+            )
+            value = response["Parameter"]["Value"]
+        except Exception as exc:  # pragma: no cover - AWS-provider specific
+            raise RuntimeError("database URL secret could not be loaded") from exc
+        if not isinstance(value, str) or not value:
+            raise RuntimeError("database URL secret is empty")
+        return value
 
     def mcp_is_configured(self) -> bool:
         return bool(self.mcp_enabled and self.mcp_cluster_id and self.mcp_bearer_token)
 
     def __repr__(self) -> str:
-        fields = self.model_dump(exclude={"database_url", "mcp_cluster_id", "mcp_bearer_token"})
+        fields = self.model_dump(
+            exclude={
+                "database_url",
+                "database_url_parameter_name",
+                "mcp_cluster_id",
+                "mcp_bearer_token",
+            }
+        )
         return (
             "Settings(database_url='***REDACTED***', "
+            "database_url_parameter_name='***REDACTED***', "
             "mcp_cluster_id='***REDACTED***', "
             f"mcp_bearer_token='***REDACTED***', {fields!r})"
         )
