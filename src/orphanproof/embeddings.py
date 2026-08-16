@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from decimal import Decimal
+from hashlib import sha256
 from typing import Any, Protocol
 
 from orphanproof.config import DEFAULT_AWS_REGION, DEFAULT_EMBEDDING_MODEL
@@ -14,8 +17,16 @@ TITAN_EMBED_TEXT_V2_MODEL = "amazon.titan-embed-text-v2:0"
 COHERE_EMBED_V4_MODEL = "cohere.embed-v4:0"
 US_COHERE_EMBED_V4_MODEL = "us.cohere.embed-v4:0"
 GLOBAL_COHERE_EMBED_V4_MODEL = "global.cohere.embed-v4:0"
+LOCAL_FEATURE_HASH_MODEL = "local.feature-hash-v1"
 COHERE_DOCUMENT_INPUT_TYPE = "search_document"
 COHERE_QUERY_INPUT_TYPE = "search_query"
+SUPPORTED_BEDROCK_EMBEDDING_MODELS = {
+    TITAN_EMBED_TEXT_V2_MODEL,
+    COHERE_EMBED_V4_MODEL,
+    US_COHERE_EMBED_V4_MODEL,
+    GLOBAL_COHERE_EMBED_V4_MODEL,
+}
+_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
 
 class EmbeddingProviderError(RuntimeError):
@@ -194,6 +205,66 @@ class BedrockEmbeddingProvider:
         ):
             raise EmbeddingProviderError("malformed embedding vector")
         return [float(item) for item in vector]
+
+
+class LocalFeatureHashEmbeddingProvider:
+    """Deterministic local feature-hash embeddings for offline demos."""
+
+    model_id = LOCAL_FEATURE_HASH_MODEL
+
+    def embed_text(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    def embed_document(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    def _embed(self, text: str) -> list[float]:
+        vector = [0.0] * EMBEDDING_DIMENSIONS
+        tokens = _TOKEN_PATTERN.findall(text.lower())
+        if not tokens:
+            return vector
+
+        for token in tokens:
+            self._accumulate(vector, f"tok:{token}", 1.0)
+            if len(token) >= 4:
+                self._accumulate(vector, f"prefix:{token[:4]}", 0.35)
+                self._accumulate(vector, f"suffix:{token[-4:]}", 0.35)
+
+        for left, right in zip(tokens, tokens[1:], strict=False):
+            self._accumulate(vector, f"bigram:{left}:{right}", 0.75)
+
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm == 0.0:
+            return vector
+        return [value / norm for value in vector]
+
+    @staticmethod
+    def _accumulate(vector: list[float], feature: str, weight: float) -> None:
+        digest = sha256(feature.encode("utf-8")).digest()
+        bucket = int.from_bytes(digest[:4], "big") % EMBEDDING_DIMENSIONS
+        sign = 1.0 if digest[4] % 2 == 0 else -1.0
+        vector[bucket] += sign * weight
+
+
+def create_embedding_provider(
+    model_id: str = DEFAULT_EMBEDDING_MODEL,
+    region_name: str = DEFAULT_AWS_REGION,
+    client: Any | None = None,
+) -> EmbeddingProviderProtocol:
+    """Create the explicitly configured embedding provider."""
+
+    if model_id == LOCAL_FEATURE_HASH_MODEL:
+        if client is not None:
+            raise EmbeddingProviderError(
+                "local embedding provider does not accept a network client"
+            )
+        return LocalFeatureHashEmbeddingProvider()
+    if model_id in SUPPORTED_BEDROCK_EMBEDDING_MODELS:
+        return BedrockEmbeddingProvider(client=client, model_id=model_id, region_name=region_name)
+    raise EmbeddingProviderError("unsupported embedding model")
 
 
 def _is_cohere_embed_v4_model(model_id: str) -> bool:

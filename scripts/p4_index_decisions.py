@@ -16,7 +16,7 @@ from apply_database_migrations import ENV_PATH, MigrationConfigError, load_datab
 
 from orphanproof.config import Settings
 from orphanproof.database import Database
-from orphanproof.embeddings import BedrockEmbeddingProvider, build_canonical_decision_memory_text
+from orphanproof.embeddings import build_canonical_decision_memory_text, create_embedding_provider
 from orphanproof.repository import MemoryRepository
 from orphanproof.service import MemoryService
 from orphanproof.vector_memory import DecisionEmbeddingWriter
@@ -77,7 +77,7 @@ def plan(database: Database) -> int:
 def load(database: Database) -> int:
     rows = _decision_rows(database)
     settings = _settings()
-    provider = BedrockEmbeddingProvider(
+    provider = create_embedding_provider(
         model_id=settings.bedrock_embedding_model,
         region_name=settings.aws_region,
     )

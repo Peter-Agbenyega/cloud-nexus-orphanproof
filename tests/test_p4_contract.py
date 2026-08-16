@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,10 +18,13 @@ from orphanproof.api import create_app
 from orphanproof.config import Settings
 from orphanproof.embeddings import (
     EMBEDDING_DIMENSIONS,
+    LOCAL_FEATURE_HASH_MODEL,
     BedrockEmbeddingProvider,
     EmbeddingProviderError,
+    LocalFeatureHashEmbeddingProvider,
     build_canonical_decision_memory_text,
     build_current_resource_retrieval_text,
+    create_embedding_provider,
 )
 from orphanproof.mcp_integration import (
     CockroachManagedMcpClient,
@@ -195,6 +199,9 @@ class FakeReasoningProvider:
 
 
 class P4EmbeddingTests(unittest.TestCase):
+    def cosine(self, left: list[float], right: list[float]) -> float:
+        return sum(a * b for a, b in zip(left, right, strict=True))
+
     def test_canonical_memory_text_is_deterministic_and_semantic(self):
         context = MemoryService(FakeMemoryRepository()).get_memory_context(
             "demo-rds-dr-standby-001"
@@ -305,11 +312,73 @@ class P4EmbeddingTests(unittest.TestCase):
         module = importlib.import_module("orphanproof.embeddings")
         self.assertTrue(hasattr(module, "BedrockEmbeddingProvider"))
 
+    def test_local_feature_hash_vector_length_and_determinism(self):
+        provider = LocalFeatureHashEmbeddingProvider()
+        first = provider.embed_document("Abandoned EBS volume migration rollback evidence")
+        second = provider.embed_document("Abandoned EBS volume migration rollback evidence")
+        self.assertEqual(len(first), EMBEDDING_DIMENSIONS)
+        self.assertEqual(first, second)
+
+    def test_local_feature_hash_does_not_use_builtin_hash(self):
+        source = (REPO_ROOT / "src" / "orphanproof" / "embeddings.py").read_text(encoding="utf-8")
+        self.assertNotIn("hash(", source)
+        self.assertIn("sha256", source)
+
+    def test_local_feature_hash_normalizes_non_empty_and_handles_empty(self):
+        provider = LocalFeatureHashEmbeddingProvider()
+        vector = provider.embed_query("quiet rds disaster recovery standby")
+        self.assertAlmostEqual(math.sqrt(sum(value * value for value in vector)), 1.0)
+        empty = provider.embed_query("")
+        self.assertEqual(empty, [0.0] * EMBEDDING_DIMENSIONS)
+
+    def test_local_feature_hash_document_and_query_share_feature_space(self):
+        provider = LocalFeatureHashEmbeddingProvider()
+        text = "rds disaster recovery standby keep"
+        self.assertEqual(provider.embed_document(text), provider.embed_query(text))
+
+    def test_local_feature_hash_similarity_prefers_related_text(self):
+        provider = LocalFeatureHashEmbeddingProvider()
+        query = provider.embed_query("rds disaster recovery standby")
+        related = provider.embed_document("keep rds standby for disaster recovery")
+        unrelated = provider.embed_document("elastic ip customer allowlist release")
+        self.assertGreater(self.cosine(query, related), self.cosine(query, unrelated))
+
+    def test_embedding_provider_factory_selects_local_and_bedrock(self):
+        local = create_embedding_provider(LOCAL_FEATURE_HASH_MODEL)
+        self.assertIsInstance(local, LocalFeatureHashEmbeddingProvider)
+        self.assertEqual(local.model_id, LOCAL_FEATURE_HASH_MODEL)
+
+        for model_id in (
+            "amazon.titan-embed-text-v2:0",
+            "cohere.embed-v4:0",
+            "us.cohere.embed-v4:0",
+            "global.cohere.embed-v4:0",
+        ):
+            with self.subTest(model_id=model_id):
+                client = FakeEmbeddingClient(
+                    payload={"embeddings": {"float": [[0.01] * EMBEDDING_DIMENSIONS]}}
+                )
+                provider = create_embedding_provider(model_id, client=client)
+                self.assertIsInstance(provider, BedrockEmbeddingProvider)
+                self.assertEqual(provider.model_id, model_id)
+
+    def test_embedding_provider_factory_rejects_unsupported_model(self):
+        with self.assertRaises(EmbeddingProviderError):
+            create_embedding_provider("unsupported.model")
+
+    def test_local_feature_hash_makes_no_network_call(self):
+        provider = create_embedding_provider(LOCAL_FEATURE_HASH_MODEL)
+        self.assertFalse(hasattr(provider, "client"))
+        self.assertFalse(hasattr(provider, "invoke_model"))
+        with self.assertRaises(EmbeddingProviderError):
+            create_embedding_provider(LOCAL_FEATURE_HASH_MODEL, client=object())
+
     def test_index_script_uses_configured_model_and_document_embeddings(self):
         source = (REPO_ROOT / "scripts" / "p4_index_decisions.py").read_text(encoding="utf-8")
         self.assertIn("bedrock_embedding_model", source)
         self.assertIn("aws_region", source)
         self.assertIn("embed_document", source)
+        self.assertIn("create_embedding_provider", source)
 
 
 class P4VectorTests(unittest.TestCase):
@@ -618,6 +687,7 @@ class P4OrchestrationAndApiTests(unittest.TestCase):
 
     def test_agent_order_and_safe_response(self):
         embedding_provider = FakeEmbeddingProvider()
+        embedding_provider.model_id = LOCAL_FEATURE_HASH_MODEL
         agent = OrphanProofAgent(
             memory_provider=DirectMemoryContextProvider(FakeMemoryRepository()),
             embedding_provider=embedding_provider,
@@ -632,6 +702,7 @@ class P4OrchestrationAndApiTests(unittest.TestCase):
         self.assertTrue(result.human_review_required)
         self.assertEqual(result.memory_transport, MemoryTransport.DIRECT_COCKROACHDB)
         self.assertEqual(result.vector_neighbors_used, 1)
+        self.assertEqual(result.embedding_model, LOCAL_FEATURE_HASH_MODEL)
         self.assertEqual(len(embedding_provider.query_calls), 1)
         self.assertEqual(embedding_provider.calls, [])
 

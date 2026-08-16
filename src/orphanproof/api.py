@@ -14,7 +14,7 @@ from orphanproof import __version__
 from orphanproof.agent import OrphanProofAgent
 from orphanproof.config import Settings, get_settings
 from orphanproof.database import Database
-from orphanproof.embeddings import BedrockEmbeddingProvider
+from orphanproof.embeddings import create_embedding_provider
 from orphanproof.mcp_integration import CockroachManagedMcpClient
 from orphanproof.memory_provider import DirectMemoryContextProvider, ManagedMcpMemoryContextProvider
 from orphanproof.models import (
@@ -77,7 +77,7 @@ def create_app(
             memory_provider = DirectMemoryContextProvider(repo, now_provider=now_provider)
         return OrphanProofAgent(
             memory_provider=memory_provider,
-            embedding_provider=BedrockEmbeddingProvider(
+            embedding_provider=create_embedding_provider(
                 model_id=app_settings.bedrock_embedding_model,
                 region_name=app_settings.aws_region,
             ),
