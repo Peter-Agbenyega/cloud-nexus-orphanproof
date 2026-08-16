@@ -59,6 +59,10 @@ P4 does not call EC2, RDS, S3, IAM, Lambda, or workload discovery APIs. It only 
 
 The AWS Lambda demo should use `local.feature-hash-v1` for vector-memory retrieval because live Bedrock calls were throttled during deadline testing. The public vector-memory endpoint does not call Nova, Titan, or Cohere, does not persist a current decision, and does not perform remediation.
 
+Public Lambda deployments should set `ORPHANPROOF_PUBLIC_DEMO_ONLY=true`. In that mode the public surface is restricted to the two synthetic judge stories, `demo-rds-dr-standby-001` and `demo-ebs-abandoned-001`; non-allowlisted resources and non-synthetic rows return 404. Public `POST /api/v1/resources/{resource_key}/analyze` is disabled because it is not needed for the deterministic demo.
+
+Vector-memory retrieval is isolated by `embedding_model`. The repository filters `orphanproof.decision_embeddings` by the configured provider model ID before cosine comparison, so Titan, Cohere, and `local.feature-hash-v1` rows are not mixed. If no rows exist for the configured model, the endpoint fails closed instead of inventing historical grounding.
+
 The endpoint returns historical nearest-neighbor decisions as evidence only:
 
 ```text

@@ -12,6 +12,12 @@ DEFAULT_AWS_REGION = "us-east-1"
 DEFAULT_EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
 DEFAULT_REASONING_MODEL = "amazon.nova-lite-v1:0"
 DEFAULT_MCP_URL = "https://cockroachlabs.cloud/mcp"
+PUBLIC_DEMO_RESOURCE_KEYS = frozenset(
+    {
+        "demo-rds-dr-standby-001",
+        "demo-ebs-abandoned-001",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -43,6 +49,10 @@ class Settings(BaseSettings):
     log_level: str = Field(
         default="INFO",
         validation_alias=AliasChoices("ORPHANPROOF_LOG_LEVEL", "log_level"),
+    )
+    public_demo_only: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ORPHANPROOF_PUBLIC_DEMO_ONLY", "public_demo_only"),
     )
     aws_region: str = Field(
         default=DEFAULT_AWS_REGION,

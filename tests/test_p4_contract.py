@@ -49,6 +49,7 @@ from orphanproof.reasoning import (
 from orphanproof.service import MemoryService, ResourceNotFoundError
 from orphanproof.vector_memory import (
     DecisionEmbeddingWriter,
+    VectorMemoryError,
     VectorMemoryRepository,
     validate_vector_limit,
     vector_literal,
@@ -95,6 +96,7 @@ class FakeConnection:
         self.executed: list[tuple[str, tuple[Any, ...]]] = []
         self.committed = False
         self.rowcount = 1
+        self.last_params: tuple[Any, ...] = ()
 
     def __enter__(self) -> FakeConnection:
         return self
@@ -106,9 +108,12 @@ class FakeConnection:
         return self
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+        self.last_params = params
         self.executed.append((sql, params))
 
     def fetchall(self) -> list[dict[str, Any]]:
+        if self.rows and "embedding_model" in self.rows[0] and len(self.last_params) >= 3:
+            return [row for row in self.rows if row["embedding_model"] == self.last_params[2]]
         return self.rows
 
     def commit(self) -> None:
@@ -146,14 +151,15 @@ class FakeEmbeddingProvider:
 class FakeVectorRepository:
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail
-        self.calls: list[tuple[list[float], int]] = []
+        self.calls: list[tuple[list[float], str, int]] = []
 
     def find_similar_decisions(
         self,
         query_embedding: list[float],
+        embedding_model: str,
         limit: int = 3,
     ) -> list[SimilarHistoricalDecision]:
-        self.calls.append((query_embedding, limit))
+        self.calls.append((query_embedding, embedding_model, limit))
         if self.fail:
             raise RuntimeError("vector provider failed")
         return [
@@ -408,14 +414,102 @@ class P4VectorTests(unittest.TestCase):
             }
         ]
         database = FakeDatabase(rows)
-        result = VectorMemoryRepository(database).find_similar_decisions([0.0] * 1024)
+        result = VectorMemoryRepository(database).find_similar_decisions(
+            [0.0] * 1024,
+            embedding_model=LOCAL_FEATURE_HASH_MODEL,
+        )
         sql, params = database.connection.executed[0]
         self.assertIn("<=>", sql)
+        self.assertIn("WHERE de.embedding_model = %s", sql)
         self.assertIn("%s::VECTOR(1024)", sql)
         self.assertNotRegex(sql.upper(), r"\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE)\b")
-        self.assertEqual(len(params), 4)
+        self.assertEqual(len(params), 5)
+        self.assertEqual(params[2], LOCAL_FEATURE_HASH_MODEL)
         self.assertEqual(result[0].historical_verdict, "KEEP")
         self.assertFalse(hasattr(result[0], "embedding"))
+
+    def test_similarity_repository_fails_closed_without_matching_model_rows(self):
+        database = FakeDatabase([])
+        for model_id in (
+            LOCAL_FEATURE_HASH_MODEL,
+            "amazon.titan-embed-text-v2:0",
+            "cohere.embed-v4:0",
+        ):
+            with self.subTest(model_id=model_id):
+                with self.assertRaises(VectorMemoryError):
+                    VectorMemoryRepository(database).find_similar_decisions(
+                        [0.0] * 1024,
+                        embedding_model=model_id,
+                    )
+
+    def test_similarity_repository_isolates_provider_model_rows(self):
+        rows = [
+            {
+                "decision_id": UUID("40000000-0000-4000-8000-000000000001"),
+                "resource_key": "demo-rds-dr-standby-001",
+                "resource_type": "RDS_INSTANCE",
+                "lifecycle_state": "STANDBY",
+                "historical_verdict": "KEEP",
+                "distance": 0.2,
+                "similarity": 0.8,
+                "evidence_summary": "local row",
+                "recommended_action": "a",
+                "blast_radius": "b",
+                "rollback_plan": "r",
+                "embedding_model": LOCAL_FEATURE_HASH_MODEL,
+            },
+            {
+                "decision_id": UUID("40000000-0000-4000-8000-000000000002"),
+                "resource_key": "demo-ebs-abandoned-001",
+                "resource_type": "EBS_VOLUME",
+                "lifecycle_state": "UNATTACHED",
+                "historical_verdict": "QUARANTINE",
+                "distance": 0.3,
+                "similarity": 0.7,
+                "evidence_summary": "titan row",
+                "recommended_action": "a",
+                "blast_radius": "b",
+                "rollback_plan": "r",
+                "embedding_model": "amazon.titan-embed-text-v2:0",
+            },
+        ]
+
+        local_result = VectorMemoryRepository(FakeDatabase(rows)).find_similar_decisions(
+            [0.0] * 1024,
+            embedding_model=LOCAL_FEATURE_HASH_MODEL,
+        )
+        titan_result = VectorMemoryRepository(FakeDatabase(rows)).find_similar_decisions(
+            [0.0] * 1024,
+            embedding_model="amazon.titan-embed-text-v2:0",
+        )
+
+        self.assertEqual([row.evidence_summary for row in local_result], ["local row"])
+        self.assertEqual([row.evidence_summary for row in titan_result], ["titan row"])
+        with self.assertRaises(VectorMemoryError):
+            VectorMemoryRepository(FakeDatabase(rows[:1])).find_similar_decisions(
+                [0.0] * 1024,
+                embedding_model="amazon.titan-embed-text-v2:0",
+            )
+        with self.assertRaises(VectorMemoryError):
+            VectorMemoryRepository(FakeDatabase(rows[1:])).find_similar_decisions(
+                [0.0] * 1024,
+                embedding_model="cohere.embed-v4:0",
+            )
+
+    def test_agent_passes_provider_model_id_to_vector_repository(self):
+        embedding_provider = FakeEmbeddingProvider()
+        embedding_provider.model_id = LOCAL_FEATURE_HASH_MODEL
+        vector_repository = FakeVectorRepository()
+        agent = OrphanProofAgent(
+            memory_provider=DirectMemoryContextProvider(FakeMemoryRepository()),
+            embedding_provider=embedding_provider,
+            vector_repository=vector_repository,
+            reasoning_provider=FakeReasoningProvider(verdict="KEEP"),
+        )
+
+        agent.analyze_resource("demo-rds-dr-standby-001")
+
+        self.assertEqual(vector_repository.calls[0][1], LOCAL_FEATURE_HASH_MODEL)
 
     def test_embedding_writer_scoped_to_decision_embeddings(self):
         database = FakeDatabase()

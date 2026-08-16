@@ -98,7 +98,12 @@ Phase P6 adds the smallest serverless public-demo path for judges:
 - `GET /` serves a dependency-light HTML demo page.
 - `GET /api/v1/resources/{resource_key}/vector-memory` runs a deterministic vector-memory demonstration without Nova, Titan, or Cohere calls.
 - The public demo is configured to use `ORPHANPROOF_BEDROCK_EMBEDDING_MODEL=local.feature-hash-v1`.
+- The public Lambda demo is restricted with `ORPHANPROOF_PUBLIC_DEMO_ONLY=true` to exactly two synthetic stories: `demo-rds-dr-standby-001` and `demo-ebs-abandoned-001`.
+- Public `POST /api/v1/resources/{resource_key}/analyze` is disabled in public-demo-only mode, including for allowed demo keys.
 - The Lambda reads the database URL from AWS Systems Manager Parameter Store SecureString by parameter name; the connection string is not stored in source, Git, tests, or docs.
+- Deployment creates a deployment-scoped SecureString under `/orphanproof/prod/database-url-deployments/` instead of overwriting the previously active runtime parameter.
+- Database TLS preserves an explicit URL `sslrootcert`, then uses `ORPHANPROOF_DATABASE_SSLROOTCERT` for the packaged Lambda CA, then the local `~/.postgresql/root.crt` when present.
+- CockroachDB vector-memory search is isolated by `embedding_model`; vectors from different providers are not compared.
 
 P6 does not add automatic remediation. It does not create EC2, ECS, EKS, NAT Gateway, RDS, OpenSearch, SageMaker, or CloudFront resources. It remains read-only by default and requires human review for remediation decisions.
 

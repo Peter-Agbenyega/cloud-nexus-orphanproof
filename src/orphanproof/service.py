@@ -130,12 +130,11 @@ class MemoryService:
 
     def build_vector_memory_response(
         self,
-        resource_key: str,
+        context: MemoryContext,
         embedding_model: str,
         memory_transport: str,
         similar_historical_decisions: list[Any],
     ) -> VectorMemoryResponse:
-        context = self.get_memory_context(resource_key)
         return VectorMemoryResponse(
             resource_key=context.resource.resource_key,
             embedding_model=embedding_model,

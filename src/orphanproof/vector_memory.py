@@ -99,6 +99,7 @@ class VectorMemoryRepository:
     def find_similar_decisions(
         self,
         query_embedding: Sequence[float],
+        embedding_model: str,
         limit: int = DEFAULT_VECTOR_LIMIT,
     ) -> list[SimilarHistoricalDecision]:
         validate_vector_limit(limit)
@@ -120,6 +121,7 @@ class VectorMemoryRepository:
                 ON d.id = de.decision_id
             INNER JOIN orphanproof.resources AS r
                 ON r.id = d.resource_id
+            WHERE de.embedding_model = %s
             ORDER BY de.embedding <=> %s::VECTOR(1024) ASC
             LIMIT %s
         """
@@ -127,8 +129,10 @@ class VectorMemoryRepository:
         literal = vector_literal(query_embedding)
         with self._database.connect() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(sql, (literal, literal, literal, limit))
+                cursor.execute(sql, (literal, literal, embedding_model, literal, limit))
                 rows = list(cursor.fetchall())
+        if not rows:
+            raise VectorMemoryError("no historical vector memory exists for configured model")
         return [SimilarHistoricalDecision.model_validate(row) for row in rows]
 
     @classmethod

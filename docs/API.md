@@ -58,6 +58,12 @@ Live database use requires `DATABASE_URL`, but the value must be placed only in 
 
 AWS Lambda deployment should use AWS Systems Manager Parameter Store SecureString for the database URL. The Lambda receives only `ORPHANPROOF_DATABASE_URL_PARAMETER_NAME`; the application resolves the SecureString at runtime and does not log the value.
 
+The public Lambda judge demo should set `ORPHANPROOF_PUBLIC_DEMO_ONLY=true`. In that mode only two synthetic resource keys are exposed: `demo-rds-dr-standby-001` and `demo-ebs-abandoned-001`. Resource listing, detail, memory-context, and vector-memory endpoints return 404 for any other key and also return 404 if an allowlisted row is not synthetic. Public analyze is disabled and returns 404 because the public demo does not require Bedrock reasoning.
+
+Deployment uses deployment-scoped SSM SecureString parameters under `/orphanproof/prod/database-url-deployments/`. The deployment script validates the public CA, builds and validates the Lambda package, then creates a new parameter and points Lambda at that parameter. It does not overwrite the previous live database URL parameter.
+
+Database TLS root certificate resolution preserves an explicit `sslrootcert` in the URL, otherwise uses `ORPHANPROOF_DATABASE_SSLROOTCERT` for the packaged Lambda CA, otherwise uses local `~/.postgresql/root.crt` when present. The application does not force `sslrootcert=system` and does not disable verification.
+
 Managed MCP live verification also requires local `ORPHANPROOF_MCP_CLUSTER_ID` and `ORPHANPROOF_MCP_BEARER_TOKEN` values. These are intentionally omitted from `.env.example` and must never be pasted into chat, source, documentation, logs, or test fixtures.
 
 P3 tests use fake repositories and do not require `.env` or a live database connection.
@@ -152,6 +158,8 @@ The demo endpoint states that records are synthetic, the API provides evidence o
 
 Runs the P4 AI-assisted analysis path for a known synthetic resource. This endpoint may invoke Bedrock and vector search when live providers are configured.
 
+In public-demo-only Lambda mode, this endpoint is disabled and returns 404 for all resource keys, including the two allowed synthetic demo keys.
+
 Required safety fields in successful responses:
 
 - `analysis_mode`: `ai_assisted`
@@ -190,6 +198,8 @@ Successful responses include:
 - `similar_historical_decisions`: historical nearest neighbors only
 
 The nearest historical verdict is not a newly generated current AI recommendation.
+
+Vector retrieval is scoped by the configured `embedding_model`. Historical decision embeddings from Titan, Cohere, and `local.feature-hash-v1` are never compared with vectors from another model. If no stored rows exist for the configured model, vector memory fails closed instead of returning an ungrounded historical verdict.
 
 ```bash
 curl http://127.0.0.1:8000/api/v1/resources/demo-rds-dr-standby-001/vector-memory

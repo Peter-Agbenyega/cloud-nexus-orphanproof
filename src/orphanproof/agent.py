@@ -30,6 +30,7 @@ class OrphanProofAgent:
         query_embedding = self._embedding_provider.embed_query(retrieval_text)
         similar_decisions = self._vector_repository.find_similar_decisions(
             query_embedding,
+            embedding_model=self._embedding_provider.model_id,
             limit=DEFAULT_VECTOR_LIMIT,
         )
         verdict = self._reasoning_provider.reason(context, similar_decisions)

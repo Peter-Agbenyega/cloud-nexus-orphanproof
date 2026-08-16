@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from orphanproof import __version__
 from orphanproof.agent import OrphanProofAgent
-from orphanproof.config import Settings, get_settings
+from orphanproof.config import PUBLIC_DEMO_RESOURCE_KEYS, Settings, get_settings
 from orphanproof.database import Database
 from orphanproof.embeddings import build_current_resource_retrieval_text, create_embedding_provider
 from orphanproof.mcp_integration import CockroachManagedMcpClient
@@ -34,6 +34,10 @@ from orphanproof.vector_memory import VectorMemoryRepository
 
 SERVICE_NAME = "cloud-nexus-orphanproof"
 PHASE = "P3_MEMORY_RETRIEVAL"
+PUBLIC_DEMO_RESOURCE_KEYS_ORDER = (
+    "demo-rds-dr-standby-001",
+    "demo-ebs-abandoned-001",
+)
 
 
 def _build_live_repository(settings: Settings) -> MemoryRepository:
@@ -65,7 +69,7 @@ def create_app(
     def get_service(repo: MemoryRepositoryProtocol = Depends(get_repository)) -> MemoryService:
         return MemoryService(repo, now_provider=now_provider)
 
-    def get_agent(repo: MemoryRepositoryProtocol = Depends(get_repository)) -> OrphanProofAgent:
+    def build_agent(repo: MemoryRepositoryProtocol) -> OrphanProofAgent:
         if agent is not None:
             return agent
         database = Database(settings=app_settings)
@@ -91,16 +95,37 @@ def create_app(
             ),
         )
 
+    def get_agent(repo: MemoryRepositoryProtocol = Depends(get_repository)) -> OrphanProofAgent:
+        return build_agent(repo)
+
     def get_vector_repository() -> VectorMemoryRepository:
         if vector_repository is not None:
             return vector_repository
         return VectorMemoryRepository(Database(settings=app_settings))
 
+    def reject_public_resource(resource_key: str) -> None:
+        if app_settings.public_demo_only and resource_key not in PUBLIC_DEMO_RESOURCE_KEYS:
+            raise ResourceNotFoundError(resource_key)
+
+    def require_public_synthetic_resource_detail(resource: ResourceDetail) -> ResourceDetail:
+        if app_settings.public_demo_only and (
+            resource.resource_key not in PUBLIC_DEMO_RESOURCE_KEYS or not resource.is_synthetic
+        ):
+            raise ResourceNotFoundError(resource.resource_key)
+        return resource
+
+    def require_public_synthetic_context(context: MemoryContext) -> MemoryContext:
+        require_public_synthetic_resource_detail(context.resource)
+        return context
+
     @app.exception_handler(ResourceNotFoundError)
-    async def resource_not_found_handler(_request: Any, exc: ResourceNotFoundError) -> JSONResponse:
+    async def resource_not_found_handler(
+        _request: Any,
+        _exc: ResourceNotFoundError,
+    ) -> JSONResponse:
         return JSONResponse(
             status_code=404,
-            content={"detail": {"message": "resource not found", "resource_key": str(exc)}},
+            content={"detail": {"message": "resource not found"}},
         )
 
     @app.exception_handler(RuntimeError)
@@ -139,6 +164,19 @@ def create_app(
         service: MemoryService = Depends(get_service),
     ) -> list[ResourceSummary]:
         try:
+            if app_settings.public_demo_only:
+                public_resources = []
+                for allowed_key in PUBLIC_DEMO_RESOURCE_KEYS_ORDER:
+                    try:
+                        resource = service.get_resource(allowed_key)
+                    except ResourceNotFoundError:
+                        continue
+                    if not resource.is_synthetic:
+                        continue
+                    if resource_type is not None and resource.resource_type != resource_type:
+                        continue
+                    public_resources.append(ResourceSummary.model_validate(resource))
+                return public_resources
             return service.list_resources(resource_type=resource_type, limit=limit, offset=offset)
         except InvalidPaginationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -148,14 +186,16 @@ def create_app(
         resource_key: str,
         service: MemoryService = Depends(get_service),
     ) -> ResourceDetail:
-        return service.get_resource(resource_key)
+        reject_public_resource(resource_key)
+        return require_public_synthetic_resource_detail(service.get_resource(resource_key))
 
     @app.get("/api/v1/resources/{resource_key}/memory-context", response_model=MemoryContext)
     def get_memory_context(
         resource_key: str,
         service: MemoryService = Depends(get_service),
     ) -> MemoryContext:
-        return service.get_memory_context(resource_key)
+        reject_public_resource(resource_key)
+        return require_public_synthetic_context(service.get_memory_context(resource_key))
 
     @app.get(
         "/api/v1/resources/{resource_key}/vector-memory",
@@ -166,16 +206,27 @@ def create_app(
         service: MemoryService = Depends(get_service),
         vector_repository: VectorMemoryRepository = Depends(get_vector_repository),
     ) -> VectorMemoryResponse:
+        reject_public_resource(resource_key)
         context = service.get_memory_context(resource_key)
+        require_public_synthetic_context(context)
         provider = create_embedding_provider(
             model_id=app_settings.bedrock_embedding_model,
             region_name=app_settings.aws_region,
         )
         retrieval_text = build_current_resource_retrieval_text(context)
         query_embedding = provider.embed_query(retrieval_text)
-        similar_decisions = vector_repository.find_similar_decisions(query_embedding)
+        similar_decisions = vector_repository.find_similar_decisions(
+            query_embedding,
+            embedding_model=provider.model_id,
+        )
+        if app_settings.public_demo_only:
+            similar_decisions = [
+                decision
+                for decision in similar_decisions
+                if decision.resource_key in PUBLIC_DEMO_RESOURCE_KEYS
+            ]
         return service.build_vector_memory_response(
-            resource_key=resource_key,
+            context=context,
             embedding_model=provider.model_id,
             memory_transport=MemoryTransport.DIRECT_COCKROACHDB,
             similar_historical_decisions=similar_decisions,
@@ -184,9 +235,12 @@ def create_app(
     @app.post("/api/v1/resources/{resource_key}/analyze", response_model=P4AnalysisResponse)
     def analyze_resource(
         resource_key: str,
-        analysis_agent: OrphanProofAgent = Depends(get_agent),
+        repo: MemoryRepositoryProtocol = Depends(get_repository),
     ) -> P4AnalysisResponse:
+        if app_settings.public_demo_only:
+            raise ResourceNotFoundError(resource_key)
         try:
+            analysis_agent = build_agent(repo)
             return analysis_agent.analyze_resource(resource_key)
         except ResourceNotFoundError:
             raise

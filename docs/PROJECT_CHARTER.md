@@ -131,7 +131,7 @@ The planned architecture has five conceptual layers:
 - Retrieval layer: CockroachDB Distributed Vector Indexing is implemented locally to retrieve similar records and historical explanations.
 - Reasoning layer: Amazon Bedrock providers are implemented locally to summarize evidence and generate human-reviewable verdict explanations.
 
-The Phase P1 memory schema foundation, P4 local agentic memory path, P5 local vector fallback, and P6 Lambda demo foundation are implemented. Live Bedrock reasoning verification remains separate because provider throttling prevented a successful Nova pass.
+The Phase P1 memory schema foundation, P4 local agentic memory path, P5 local vector fallback, and P6 Lambda demo foundation are implemented. The public Lambda demo is restricted to the two synthetic judge stories and disables public AI-assisted analyze calls. Live Bedrock reasoning verification remains separate because provider throttling prevented a successful Nova pass.
 
 ## Implemented Phase P3 Local API Foundation
 
