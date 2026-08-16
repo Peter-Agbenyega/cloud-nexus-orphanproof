@@ -236,16 +236,39 @@ class P4EmbeddingTests(unittest.TestCase):
         self.assertEqual(body["embedding_types"], ["float"])
         self.assertEqual(body["output_dimension"], 1024)
 
+    def test_cohere_inference_profile_ids_use_cohere_document_payload(self):
+        for model_id in ("us.cohere.embed-v4:0", "global.cohere.embed-v4:0"):
+            with self.subTest(model_id=model_id):
+                client = FakeEmbeddingClient(
+                    payload={"embeddings": {"float": [[0.01] * EMBEDDING_DIMENSIONS]}}
+                )
+                provider = BedrockEmbeddingProvider(client=client, model_id=model_id)
+                vector = provider.embed_document("profile memory")
+                body = json.loads(client.calls[0]["body"])
+                self.assertEqual(len(vector), 1024)
+                self.assertEqual(client.calls[0]["modelId"], model_id)
+                self.assertEqual(body["input_type"], "search_document")
+                self.assertEqual(body["texts"], ["profile memory"])
+                self.assertEqual(body["embedding_types"], ["float"])
+                self.assertEqual(body["output_dimension"], 1024)
+
     def test_cohere_query_request_uses_search_query(self):
-        client = FakeEmbeddingClient(
-            payload={"embeddings": {"float": [[0.01] * EMBEDDING_DIMENSIONS]}}
-        )
-        provider = BedrockEmbeddingProvider(client=client, model_id="cohere.embed-v4:0")
-        vector = provider.embed_query("current evidence")
-        body = json.loads(client.calls[0]["body"])
-        self.assertEqual(len(vector), 1024)
-        self.assertEqual(body["input_type"], "search_query")
-        self.assertEqual(body["texts"], ["current evidence"])
+        for model_id in (
+            "cohere.embed-v4:0",
+            "us.cohere.embed-v4:0",
+            "global.cohere.embed-v4:0",
+        ):
+            with self.subTest(model_id=model_id):
+                client = FakeEmbeddingClient(
+                    payload={"embeddings": {"float": [[0.01] * EMBEDDING_DIMENSIONS]}}
+                )
+                provider = BedrockEmbeddingProvider(client=client, model_id=model_id)
+                vector = provider.embed_query("current evidence")
+                body = json.loads(client.calls[0]["body"])
+                self.assertEqual(len(vector), 1024)
+                self.assertEqual(client.calls[0]["modelId"], model_id)
+                self.assertEqual(body["input_type"], "search_query")
+                self.assertEqual(body["texts"], ["current evidence"])
 
     def test_wrong_size_and_malformed_embedding_response_rejected(self):
         with self.assertRaises(EmbeddingProviderError):
@@ -258,18 +281,25 @@ class P4EmbeddingTests(unittest.TestCase):
         with self.assertRaises(EmbeddingProviderError):
             BedrockEmbeddingProvider(client=Malformed()).embed_text("x")
 
-        cohere_short = FakeEmbeddingClient(payload={"embeddings": [[0.1]]})
-        with self.assertRaises(EmbeddingProviderError):
-            BedrockEmbeddingProvider(
-                client=cohere_short, model_id="cohere.embed-v4:0"
-            ).embed_document("x")
+        for model_id in (
+            "cohere.embed-v4:0",
+            "us.cohere.embed-v4:0",
+            "global.cohere.embed-v4:0",
+        ):
+            with self.subTest(model_id=model_id):
+                cohere_short = FakeEmbeddingClient(payload={"embeddings": [[0.1]]})
+                with self.assertRaises(EmbeddingProviderError):
+                    BedrockEmbeddingProvider(
+                        client=cohere_short,
+                        model_id=model_id,
+                    ).embed_document("x")
 
-        cohere_malformed = FakeEmbeddingClient(payload={"not_embeddings": []})
-        with self.assertRaises(EmbeddingProviderError):
-            BedrockEmbeddingProvider(
-                client=cohere_malformed,
-                model_id="cohere.embed-v4:0",
-            ).embed_query("x")
+                cohere_malformed = FakeEmbeddingClient(payload={"not_embeddings": []})
+                with self.assertRaises(EmbeddingProviderError):
+                    BedrockEmbeddingProvider(
+                        client=cohere_malformed,
+                        model_id=model_id,
+                    ).embed_query("x")
 
     def test_provider_import_makes_no_boto3_client(self):
         module = importlib.import_module("orphanproof.embeddings")

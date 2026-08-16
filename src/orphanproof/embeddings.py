@@ -12,6 +12,8 @@ from orphanproof.models import HistoricalDecision, MemoryContext
 EMBEDDING_DIMENSIONS = 1024
 TITAN_EMBED_TEXT_V2_MODEL = "amazon.titan-embed-text-v2:0"
 COHERE_EMBED_V4_MODEL = "cohere.embed-v4:0"
+US_COHERE_EMBED_V4_MODEL = "us.cohere.embed-v4:0"
+GLOBAL_COHERE_EMBED_V4_MODEL = "global.cohere.embed-v4:0"
 COHERE_DOCUMENT_INPUT_TYPE = "search_document"
 COHERE_QUERY_INPUT_TYPE = "search_query"
 
@@ -166,7 +168,7 @@ class BedrockEmbeddingProvider:
                 "dimensions": EMBEDDING_DIMENSIONS,
                 "normalize": True,
             }
-        if self.model_id == COHERE_EMBED_V4_MODEL:
+        if _is_cohere_embed_v4_model(self.model_id):
             return {
                 "input_type": input_type,
                 "texts": [text],
@@ -183,7 +185,7 @@ class BedrockEmbeddingProvider:
             raise EmbeddingProviderError("malformed embedding provider response") from exc
         if self.model_id == TITAN_EMBED_TEXT_V2_MODEL:
             vector = payload.get("embedding")
-        elif self.model_id == COHERE_EMBED_V4_MODEL:
+        elif _is_cohere_embed_v4_model(self.model_id):
             vector = _extract_cohere_float_embedding(payload)
         else:
             raise EmbeddingProviderError("unsupported embedding model")
@@ -192,6 +194,14 @@ class BedrockEmbeddingProvider:
         ):
             raise EmbeddingProviderError("malformed embedding vector")
         return [float(item) for item in vector]
+
+
+def _is_cohere_embed_v4_model(model_id: str) -> bool:
+    return model_id in {
+        COHERE_EMBED_V4_MODEL,
+        US_COHERE_EMBED_V4_MODEL,
+        GLOBAL_COHERE_EMBED_V4_MODEL,
+    }
 
 
 def _extract_cohere_float_embedding(payload: dict[str, Any]) -> Any:
