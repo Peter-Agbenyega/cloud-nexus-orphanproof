@@ -1,4 +1,4 @@
-"""Bedrock Titan embeddings and deterministic memory text builders."""
+"""Bedrock embeddings and deterministic memory text builders."""
 
 from __future__ import annotations
 
@@ -10,6 +10,10 @@ from orphanproof.config import DEFAULT_AWS_REGION, DEFAULT_EMBEDDING_MODEL
 from orphanproof.models import HistoricalDecision, MemoryContext
 
 EMBEDDING_DIMENSIONS = 1024
+TITAN_EMBED_TEXT_V2_MODEL = "amazon.titan-embed-text-v2:0"
+COHERE_EMBED_V4_MODEL = "cohere.embed-v4:0"
+COHERE_DOCUMENT_INPUT_TYPE = "search_document"
+COHERE_QUERY_INPUT_TYPE = "search_query"
 
 
 class EmbeddingProviderError(RuntimeError):
@@ -20,6 +24,10 @@ class EmbeddingProviderProtocol(Protocol):
     model_id: str
 
     def embed_text(self, text: str) -> list[float]: ...
+
+    def embed_document(self, text: str) -> list[float]: ...
+
+    def embed_query(self, text: str) -> list[float]: ...
 
 
 def _stable_json(value: Any) -> str:
@@ -109,7 +117,7 @@ def build_current_resource_retrieval_text(context: MemoryContext) -> str:
 
 
 class BedrockEmbeddingProvider:
-    """Generates 1024-dimensional normalized Titan embeddings through Bedrock Runtime."""
+    """Generates 1024-dimensional embeddings through Bedrock Runtime."""
 
     def __init__(
         self,
@@ -130,15 +138,18 @@ class BedrockEmbeddingProvider:
         return self._client
 
     def embed_text(self, text: str) -> list[float]:
+        return self.embed_document(text)
+
+    def embed_document(self, text: str) -> list[float]:
+        return self._embed(text, input_type=COHERE_DOCUMENT_INPUT_TYPE)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed(text, input_type=COHERE_QUERY_INPUT_TYPE)
+
+    def _embed(self, text: str, input_type: str) -> list[float]:
         if not text.strip():
             raise EmbeddingProviderError("embedding text must not be empty")
-        body = json.dumps(
-            {
-                "inputText": text,
-                "dimensions": EMBEDDING_DIMENSIONS,
-                "normalize": True,
-            }
-        )
+        body = json.dumps(self._request_payload(text, input_type))
         try:
             response = self.client.invoke_model(modelId=self.model_id, body=body)
         except Exception as exc:  # pragma: no cover - provider-specific
@@ -148,19 +159,50 @@ class BedrockEmbeddingProvider:
             raise EmbeddingProviderError("embedding response dimensions did not match VECTOR(1024)")
         return embedding
 
-    @staticmethod
-    def _extract_embedding(response: Any) -> list[float]:
+    def _request_payload(self, text: str, input_type: str) -> dict[str, Any]:
+        if self.model_id == TITAN_EMBED_TEXT_V2_MODEL:
+            return {
+                "inputText": text,
+                "dimensions": EMBEDDING_DIMENSIONS,
+                "normalize": True,
+            }
+        if self.model_id == COHERE_EMBED_V4_MODEL:
+            return {
+                "input_type": input_type,
+                "texts": [text],
+                "embedding_types": ["float"],
+                "output_dimension": EMBEDDING_DIMENSIONS,
+            }
+        raise EmbeddingProviderError("unsupported embedding model")
+
+    def _extract_embedding(self, response: Any) -> list[float]:
         try:
             raw_body = response["body"].read()
             payload = json.loads(raw_body)
-            vector = payload["embedding"]
         except Exception as exc:
             raise EmbeddingProviderError("malformed embedding provider response") from exc
+        if self.model_id == TITAN_EMBED_TEXT_V2_MODEL:
+            vector = payload.get("embedding")
+        elif self.model_id == COHERE_EMBED_V4_MODEL:
+            vector = _extract_cohere_float_embedding(payload)
+        else:
+            raise EmbeddingProviderError("unsupported embedding model")
         if not isinstance(vector, list) or not all(
             isinstance(item, int | float) for item in vector
         ):
             raise EmbeddingProviderError("malformed embedding vector")
         return [float(item) for item in vector]
+
+
+def _extract_cohere_float_embedding(payload: dict[str, Any]) -> Any:
+    embeddings = payload.get("embeddings")
+    if isinstance(embeddings, list) and len(embeddings) == 1:
+        return embeddings[0]
+    if isinstance(embeddings, dict):
+        float_embeddings = embeddings.get("float")
+        if isinstance(float_embeddings, list) and len(float_embeddings) == 1:
+            return float_embeddings[0]
+    raise EmbeddingProviderError("malformed embedding provider response")
 
 
 def _sanitize_provider_error(exc: Exception) -> str:

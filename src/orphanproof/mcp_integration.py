@@ -104,7 +104,7 @@ class CockroachManagedMcpClient:
         assert self._settings.mcp_bearer_token is not None
         return {
             "Authorization": "Bearer " + self._settings.mcp_bearer_token.get_secret_value(),
-            "x-cockroach-cluster-id": self._settings.mcp_cluster_id.get_secret_value(),
+            "mcp-cluster-id": self._settings.mcp_cluster_id.get_secret_value(),
         }
 
     def _session(self) -> Any:

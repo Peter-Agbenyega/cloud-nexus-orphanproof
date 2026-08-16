@@ -3,12 +3,13 @@
 Phase P4 implements the local OrphanProof intelligence path:
 
 ```text
-Persistent memory -> Titan embeddings -> CockroachDB vector retrieval -> Nova reasoning -> human review
+Persistent memory -> Bedrock embeddings -> CockroachDB vector retrieval -> Nova reasoning -> human review
 ```
 
 ## Implemented And Locally Tested
 
-- `BedrockEmbeddingProvider` for Amazon Bedrock Titan Text Embeddings V2
+- `BedrockEmbeddingProvider` for Amazon Bedrock Titan Text Embeddings V2 and configurable Cohere Embed v4 fallback
+- document embeddings for historical decisions and query embeddings for current-resource retrieval
 - deterministic canonical decision memory text
 - scoped `decision_embeddings` writer
 - CockroachDB cosine vector similarity search with `<=>`
@@ -26,7 +27,7 @@ Unit tests use injected fakes and make zero network calls.
 ## Live Verification Status
 
 - Live CockroachDB vector embedding load: not yet verified in this P4 coding step
-- Live Titan embedding invocation: not yet verified in this P4 coding step
+- Live Titan or Cohere embedding invocation: not yet verified in this P4 coding step
 - Live Nova Lite reasoning invocation: not yet verified in this P4 coding step
 - Live CockroachDB Managed MCP read: not yet verified in this P4 coding step
 
@@ -51,4 +52,5 @@ P4 does not call EC2, RDS, S3, IAM, Lambda, or workload discovery APIs. It only 
 - CockroachDB Distributed Vector Indexing
 - CockroachDB Cloud Managed MCP Server
 - Amazon Bedrock Titan Text Embeddings V2
+- Amazon Bedrock Cohere Embed v4 fallback for 1024-dimensional embeddings
 - Amazon Bedrock Nova Lite

@@ -62,7 +62,7 @@ Local API documentation is available in `docs/API.md`.
 Phase P4 adds the local application intelligence path:
 
 - deterministic canonical memory text for historical decisions
-- Amazon Bedrock Titan Text Embeddings V2 provider for `VECTOR(1024)` embeddings
+- Amazon Bedrock Titan Text Embeddings V2 provider for `VECTOR(1024)` embeddings, with configurable Cohere Embed v4 fallback
 - scoped `orphanproof.decision_embeddings` persistence
 - CockroachDB cosine vector similarity search using `<=>`
 - CockroachDB Cloud Managed MCP read-only client and memory-provider abstraction
@@ -81,6 +81,7 @@ Live verification status for P4 is not claimed until the local live scripts comp
 
 - CockroachDB Managed MCP integration: implemented locally; live verification pending local auth
 - Amazon Bedrock Titan Text Embeddings V2: implemented locally; live invocation pending local AWS auth
+- Amazon Bedrock Cohere Embed v4 fallback: implemented locally; live invocation pending local AWS auth
 - Amazon Bedrock Nova Lite reasoning: implemented locally; live invocation pending local AWS auth
 - AWS Lambda and API Gateway: planned
 - Amazon S3 Remediation Passports: planned

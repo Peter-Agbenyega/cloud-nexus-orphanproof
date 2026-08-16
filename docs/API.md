@@ -1,6 +1,6 @@
 # Cloud Nexus OrphanProof API
 
-Phase P3 implements a local, read-only FastAPI memory retrieval service. Phase P4 adds an AI-assisted analysis endpoint that combines persistent memory, Titan embeddings, CockroachDB vector retrieval, and Nova reasoning when live providers are configured.
+Phase P3 implements a local, read-only FastAPI memory retrieval service. Phase P4 adds an AI-assisted analysis endpoint that combines persistent memory, Bedrock embeddings, CockroachDB vector retrieval, and Nova reasoning when live providers are configured.
 
 The P3 memory-context endpoint does not generate an AI verdict. Historical seed decisions are returned as historical evidence only.
 
@@ -51,6 +51,8 @@ ORPHANPROOF_BEDROCK_REASONING_MODEL=amazon.nova-lite-v1:0
 ORPHANPROOF_MCP_ENABLED=false
 ORPHANPROOF_MCP_URL=https://cockroachlabs.cloud/mcp
 ```
+
+`ORPHANPROOF_BEDROCK_EMBEDDING_MODEL` supports `amazon.titan-embed-text-v2:0` and `cohere.embed-v4:0`. Both paths must return exactly 1024-dimensional embeddings for the existing CockroachDB `VECTOR(1024)` schema.
 
 Live database use requires `DATABASE_URL`, but the value must be placed only in the ignored local `.env` file or a managed secret service. Obtain the connection value from the approved CockroachDB connection workflow. Never copy the value into source code, documentation, screenshots, logs, terminal output, or Git history.
 

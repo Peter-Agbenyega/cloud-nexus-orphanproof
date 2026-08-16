@@ -62,13 +62,16 @@ class FakeBody:
 
 
 class FakeEmbeddingClient:
-    def __init__(self, vector: list[float] | None = None) -> None:
+    def __init__(
+        self, vector: list[float] | None = None, payload: dict[str, Any] | None = None
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.vector = vector or [0.01] * EMBEDDING_DIMENSIONS
+        self.payload = payload
 
     def invoke_model(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(kwargs)
-        return {"body": FakeBody({"embedding": self.vector})}
+        return {"body": FakeBody(self.payload or {"embedding": self.vector})}
 
 
 class FakeReasoningClient:
@@ -121,9 +124,18 @@ class FakeEmbeddingProvider:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.query_calls: list[str] = []
 
     def embed_text(self, text: str) -> list[float]:
         self.calls.append(text)
+        return [0.01] * EMBEDDING_DIMENSIONS
+
+    def embed_document(self, text: str) -> list[float]:
+        self.calls.append(text)
+        return [0.01] * EMBEDDING_DIMENSIONS
+
+    def embed_query(self, text: str) -> list[float]:
+        self.query_calls.append(text)
         return [0.01] * EMBEDDING_DIMENSIONS
 
 
@@ -204,13 +216,36 @@ class P4EmbeddingTests(unittest.TestCase):
     def test_titan_request_and_dimension_validation(self):
         client = FakeEmbeddingClient()
         provider = BedrockEmbeddingProvider(client=client, model_id="amazon.titan-embed-text-v2:0")
-        vector = provider.embed_text("stable memory")
+        vector = provider.embed_document("stable memory")
         self.assertEqual(len(vector), 1024)
         body = json.loads(client.calls[0]["body"])
         self.assertEqual(client.calls[0]["modelId"], "amazon.titan-embed-text-v2:0")
         self.assertEqual(body["dimensions"], 1024)
         self.assertTrue(body["normalize"])
         self.assertEqual(body["inputText"], "stable memory")
+
+    def test_cohere_document_request_and_response_validation(self):
+        client = FakeEmbeddingClient(payload={"embeddings": [[0.01] * EMBEDDING_DIMENSIONS]})
+        provider = BedrockEmbeddingProvider(client=client, model_id="cohere.embed-v4:0")
+        vector = provider.embed_document("stable memory")
+        body = json.loads(client.calls[0]["body"])
+        self.assertEqual(len(vector), 1024)
+        self.assertEqual(client.calls[0]["modelId"], "cohere.embed-v4:0")
+        self.assertEqual(body["input_type"], "search_document")
+        self.assertEqual(body["texts"], ["stable memory"])
+        self.assertEqual(body["embedding_types"], ["float"])
+        self.assertEqual(body["output_dimension"], 1024)
+
+    def test_cohere_query_request_uses_search_query(self):
+        client = FakeEmbeddingClient(
+            payload={"embeddings": {"float": [[0.01] * EMBEDDING_DIMENSIONS]}}
+        )
+        provider = BedrockEmbeddingProvider(client=client, model_id="cohere.embed-v4:0")
+        vector = provider.embed_query("current evidence")
+        body = json.loads(client.calls[0]["body"])
+        self.assertEqual(len(vector), 1024)
+        self.assertEqual(body["input_type"], "search_query")
+        self.assertEqual(body["texts"], ["current evidence"])
 
     def test_wrong_size_and_malformed_embedding_response_rejected(self):
         with self.assertRaises(EmbeddingProviderError):
@@ -223,9 +258,28 @@ class P4EmbeddingTests(unittest.TestCase):
         with self.assertRaises(EmbeddingProviderError):
             BedrockEmbeddingProvider(client=Malformed()).embed_text("x")
 
+        cohere_short = FakeEmbeddingClient(payload={"embeddings": [[0.1]]})
+        with self.assertRaises(EmbeddingProviderError):
+            BedrockEmbeddingProvider(
+                client=cohere_short, model_id="cohere.embed-v4:0"
+            ).embed_document("x")
+
+        cohere_malformed = FakeEmbeddingClient(payload={"not_embeddings": []})
+        with self.assertRaises(EmbeddingProviderError):
+            BedrockEmbeddingProvider(
+                client=cohere_malformed,
+                model_id="cohere.embed-v4:0",
+            ).embed_query("x")
+
     def test_provider_import_makes_no_boto3_client(self):
         module = importlib.import_module("orphanproof.embeddings")
         self.assertTrue(hasattr(module, "BedrockEmbeddingProvider"))
+
+    def test_index_script_uses_configured_model_and_document_embeddings(self):
+        source = (REPO_ROOT / "scripts" / "p4_index_decisions.py").read_text(encoding="utf-8")
+        self.assertIn("bedrock_embedding_model", source)
+        self.assertIn("aws_region", source)
+        self.assertIn("embed_document", source)
 
 
 class P4VectorTests(unittest.TestCase):
@@ -347,6 +401,16 @@ class P4McpTests(unittest.TestCase):
         self.assertTrue(is_tool_allowed("get_table_schema"))
         self.assertFalse(is_tool_allowed("insert_rows"))
         self.assertFalse(is_tool_allowed("create_database"))
+
+    def test_mcp_headers_use_documented_cluster_header_name(self):
+        settings = Settings(
+            mcp_enabled=True,
+            mcp_cluster_id="fake-cluster-for-test",
+            mcp_bearer_token="fake-token-for-test",
+        )
+        headers = CockroachManagedMcpClient(settings)._headers()
+        self.assertEqual(set(headers), {"Authorization", "mcp-cluster-id"})
+        self.assertNotIn("x-cockroach-cluster-id", headers)
 
     def test_mcp_mode_does_not_silently_fallback(self):
         class FailingMcp:
@@ -523,7 +587,13 @@ class P4OrchestrationAndApiTests(unittest.TestCase):
         )
 
     def test_agent_order_and_safe_response(self):
-        agent = self.build_agent("KEEP")
+        embedding_provider = FakeEmbeddingProvider()
+        agent = OrphanProofAgent(
+            memory_provider=DirectMemoryContextProvider(FakeMemoryRepository()),
+            embedding_provider=embedding_provider,
+            vector_repository=FakeVectorRepository(),
+            reasoning_provider=FakeReasoningProvider(verdict="KEEP"),
+        )
         result = agent.analyze_resource("demo-rds-dr-standby-001")
         self.assertEqual(result.analysis_mode, "ai_assisted")
         self.assertTrue(result.ai_verdict_generated)
@@ -532,6 +602,8 @@ class P4OrchestrationAndApiTests(unittest.TestCase):
         self.assertTrue(result.human_review_required)
         self.assertEqual(result.memory_transport, MemoryTransport.DIRECT_COCKROACHDB)
         self.assertEqual(result.vector_neighbors_used, 1)
+        self.assertEqual(len(embedding_provider.query_calls), 1)
+        self.assertEqual(embedding_provider.calls, [])
 
     def test_unknown_resource_and_provider_failures(self):
         with self.assertRaises(ResourceNotFoundError):
