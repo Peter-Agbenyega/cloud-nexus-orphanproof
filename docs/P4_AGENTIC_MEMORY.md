@@ -26,12 +26,12 @@ Unit tests use injected fakes and make zero network calls.
 
 ## Live Verification Status
 
-- Live CockroachDB vector embedding load: not yet verified in this P4 coding step
-- Live Titan or Cohere embedding invocation: not yet verified in this P4 coding step
-- Live Nova Lite reasoning invocation: not yet verified in this P4 coding step
+- Live CockroachDB vector embedding load with `local.feature-hash-v1`: verified after P4 as part of P5
+- Live Titan or Cohere embedding invocation: implemented but currently provider-throttled
+- Live Nova Lite reasoning invocation: implemented but currently provider-throttled
 - Live CockroachDB Managed MCP read: not yet verified in this P4 coding step
 
-Do not mark these as live verified until the safe live gates pass locally.
+Do not mark Bedrock reasoning as live verified until the safe live gates pass locally.
 
 ## Safety Contract
 
@@ -54,3 +54,16 @@ P4 does not call EC2, RDS, S3, IAM, Lambda, or workload discovery APIs. It only 
 - Amazon Bedrock Titan Text Embeddings V2
 - Amazon Bedrock Cohere Embed v4 fallback for 1024-dimensional embeddings
 - Amazon Bedrock Nova Lite
+
+## P6 Public Demo Mode
+
+The AWS Lambda demo should use `local.feature-hash-v1` for vector-memory retrieval because live Bedrock calls were throttled during deadline testing. The public vector-memory endpoint does not call Nova, Titan, or Cohere, does not persist a current decision, and does not perform remediation.
+
+The endpoint returns historical nearest-neighbor decisions as evidence only:
+
+```text
+analysis_mode = vector_memory
+ai_verdict_generated = false
+automatic_action_taken = false
+human_review_required = true
+```

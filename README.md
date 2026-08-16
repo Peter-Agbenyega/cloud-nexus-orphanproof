@@ -6,7 +6,7 @@ Cloud teams often find AWS resources that look unused: unattached EBS volumes, i
 
 Cloud Nexus OrphanProof is a read-only FinOps and cloud safety assistant under active development. It is designed to combine synthetic AWS resource evidence with persistent operational memory, explain why a resource exists, compare current signals against historical context, and produce a human-reviewable verdict before any remediation decision is made.
 
-Phase P1 is implemented and live-verified for the database schema foundation. Phase P2 synthetic persistent-memory data ingestion is implemented and live-verified. Phase P3 local read-only memory retrieval is implemented. Phase P4 agentic memory integration is implemented locally with unit-test fakes; live CockroachDB vector loading, Bedrock inference, and Managed MCP verification must be run with local credentials before being marked live-verified.
+Phase P1 is implemented and live-verified for the database schema foundation. Phase P2 synthetic persistent-memory data ingestion is implemented and live-verified. Phase P3 local read-only memory retrieval is implemented. Phase P4 agentic memory integration is implemented locally with unit-test fakes; live provider verification remains separate. Phase P5 local deterministic vector-memory fallback is implemented and has been live-verified against CockroachDB decision embeddings using `local.feature-hash-v1`.
 
 ## Implemented Phase P1 Foundation
 
@@ -77,15 +77,42 @@ P4 does not automatically delete, stop, detach, release, terminate, resize, or o
 
 Live verification status for P4 is not claimed until the local live scripts complete successfully.
 
+## Implemented Phase P5 Local Vector-Memory Fallback
+
+Phase P5 adds a truthful deterministic embedding provider for deadline-safe demos:
+
+- `local.feature-hash-v1` produces 1024-dimensional normalized embeddings without network calls.
+- The same provider can embed historical decision documents and current resource queries.
+- CockroachDB vector retrieval remains read-only and returns historical decisions as evidence.
+- Live verification confirmed eight historical decisions and eight decision embeddings.
+- The demo RDS story retrieved historical `KEEP`; the demo EBS story retrieved historical `QUARANTINE`.
+
+This local provider exists because live Bedrock embedding and reasoning calls were provider-throttled during deadline testing. Titan, Cohere Embed v4, and Nova Lite support remains implemented, but this repository does not claim live Bedrock reasoning passed.
+
+## Implemented Phase P6 Lambda Demo Foundation
+
+Phase P6 adds the smallest serverless public-demo path for judges:
+
+- FastAPI runs on AWS Lambda through `Mangum`.
+- A Lambda Function URL can expose the public HTTPS demo without API Gateway.
+- `GET /` serves a dependency-light HTML demo page.
+- `GET /api/v1/resources/{resource_key}/vector-memory` runs a deterministic vector-memory demonstration without Nova, Titan, or Cohere calls.
+- The public demo is configured to use `ORPHANPROOF_BEDROCK_EMBEDDING_MODEL=local.feature-hash-v1`.
+- The Lambda reads the database URL from AWS Systems Manager Parameter Store SecureString by parameter name; the connection string is not stored in source, Git, tests, or docs.
+
+P6 does not add automatic remediation. It does not create EC2, ECS, EKS, NAT Gateway, RDS, OpenSearch, SageMaker, or CloudFront resources. It remains read-only by default and requires human review for remediation decisions.
+
 ## Sponsor Integrations
 
 - CockroachDB Managed MCP integration: implemented locally; live verification pending local auth
-- Amazon Bedrock Titan Text Embeddings V2: implemented locally; live invocation pending local AWS auth
-- Amazon Bedrock Cohere Embed v4 fallback: implemented locally; live invocation pending local AWS auth
-- Amazon Bedrock Nova Lite reasoning: implemented locally; live invocation pending local AWS auth
-- AWS Lambda and API Gateway: planned
+- Amazon Bedrock Titan Text Embeddings V2: implemented locally; live invocation currently provider-throttled
+- Amazon Bedrock Cohere Embed v4 fallback: implemented locally; live invocation currently provider-throttled
+- Amazon Bedrock Nova Lite reasoning: implemented locally; live invocation currently provider-throttled
+- AWS Lambda and API Gateway: Lambda Function URL foundation implemented for the current public demo; API Gateway remains planned only if later routing or authorization needs justify it
+- AWS Lambda Function URL: deployment foundation implemented
+- AWS API Gateway: not required for the current smallest public demo
 - Amazon S3 Remediation Passports: planned
-- CockroachDB Distributed Vector Indexing: schema and retrieval integration implemented; live vector loading pending local database auth
+- CockroachDB Distributed Vector Indexing: schema and retrieval integration implemented; local deterministic vector memory live-verified
 
 ## Supported MVP Resource Types
 
@@ -112,7 +139,9 @@ For hackathon demonstrations, OrphanProof uses synthetic AWS resource evidence b
 Current data status:
 
 - Phase P2 synthetic persistent-memory dataset: implemented and live-verified
-- Phase P4 agent verdict workflow: implemented locally; live Bedrock verification pending
+- Phase P4 agent verdict workflow: implemented locally; live Bedrock verification currently throttled
+- Phase P5 deterministic CockroachDB vector-memory demo: implemented and live-verified
+- Phase P6 AWS Lambda public-demo foundation: implemented
 - React dashboard: not yet implemented
 - Human approval interface: not yet implemented
 

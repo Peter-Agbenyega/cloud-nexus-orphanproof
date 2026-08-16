@@ -4,12 +4,36 @@ import importlib
 import json
 import unittest
 from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 from test_p3_service import FakeMemoryRepository
 
 from orphanproof.api import create_app
 from orphanproof.config import Settings
+from orphanproof.embeddings import LOCAL_FEATURE_HASH_MODEL
+from orphanproof.models import SimilarHistoricalDecision
+
+
+class FakeVectorRepository:
+    def find_similar_decisions(self, query_embedding, limit=3):
+        self.query_embedding = query_embedding
+        self.limit = limit
+        return [
+            SimilarHistoricalDecision(
+                decision_id=UUID("40000000-0000-4000-8000-000000000001"),
+                resource_key="demo-rds-dr-standby-001",
+                resource_type="RDS_INSTANCE",
+                lifecycle_state="STANDBY",
+                historical_verdict="KEEP",
+                distance=0.043,
+                similarity=0.957,
+                evidence_summary="DR documentation and dependency memory exist.",
+                recommended_action="Keep and review exception.",
+                blast_radius="High synthetic DR risk.",
+                rollback_plan="Restore from synthetic snapshot.",
+            )
+        ]
 
 
 class P3ApiTests(unittest.TestCase):
@@ -49,8 +73,21 @@ class P3ApiTests(unittest.TestCase):
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["phase"], "P3_MEMORY_RETRIEVAL")
         self.assertEqual(payload["database_mode"], "dependency_injected")
+        self.assertEqual(payload["deployment_platform"], "local")
         self.assertEqual(payload["analysis_mode"], "evidence_only")
         self.assertFalse(payload["ai_verdict_generated"])
+
+    def test_root_demo_page(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        body = response.text
+        self.assertIn("Cloud Nexus OrphanProof", body)
+        self.assertIn("Idle doesn't mean orphaned.", body)
+        self.assertIn("It never deletes cloud resources automatically.", body)
+        self.assertIn("Human review required.", body)
+        self.assertIn("Bedrock integration available", body)
+        self.assertIn("demo-rds-dr-standby-001", body)
+        self.assertIn("demo-ebs-abandoned-001", body)
 
     def test_demo(self):
         response = self.client.get("/api/v1/demo")
@@ -111,6 +148,42 @@ class P3ApiTests(unittest.TestCase):
         self.assertTrue(payload["evidence_signals"]["prior_quarantine_exists"])
         self.assert_safe_response(payload)
 
+    def test_vector_memory_endpoint_is_historical_and_safe(self):
+        vector_repository = FakeVectorRepository()
+        client = TestClient(
+            create_app(
+                repository=FakeMemoryRepository(),
+                vector_repository=vector_repository,
+                settings=Settings(
+                    database_url=None,
+                    cors_origins=["http://localhost:5173"],
+                    bedrock_embedding_model=LOCAL_FEATURE_HASH_MODEL,
+                ),
+                now_provider=lambda: datetime(2026, 8, 15, tzinfo=UTC),
+            )
+        )
+
+        response = client.get("/api/v1/resources/demo-rds-dr-standby-001/vector-memory")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["analysis_mode"], "vector_memory")
+        self.assertEqual(payload["embedding_model"], LOCAL_FEATURE_HASH_MODEL)
+        self.assertEqual(payload["memory_transport"], "direct_cockroachdb")
+        self.assertFalse(payload["ai_verdict_generated"])
+        self.assertIsNone(payload["current_ai_verdict"])
+        self.assertFalse(payload["decision_persisted"])
+        self.assertFalse(payload["automatic_action_taken"])
+        self.assertTrue(payload["human_review_required"])
+        self.assertEqual(payload["vector_neighbors_used"], 1)
+        self.assertEqual(
+            payload["similar_historical_decisions"][0]["historical_verdict"],
+            "KEEP",
+        )
+        self.assertNotIn("current_verdict", json.dumps(payload))
+        self.assert_safe_response(payload)
+        self.assertEqual(len(vector_repository.query_embedding), 1024)
+
     def test_unknown_resource_returns_404(self):
         response = self.client.get("/api/v1/resources/missing-resource")
         self.assertEqual(response.status_code, 404)
@@ -135,6 +208,10 @@ class P3ApiTests(unittest.TestCase):
     def test_no_database_connection_during_app_import(self):
         module = importlib.import_module("orphanproof.api")
         self.assertTrue(hasattr(module, "app"))
+
+    def test_lambda_handler_import(self):
+        module = importlib.import_module("orphanproof.lambda_handler")
+        self.assertTrue(hasattr(module, "handler"))
 
 
 if __name__ == "__main__":

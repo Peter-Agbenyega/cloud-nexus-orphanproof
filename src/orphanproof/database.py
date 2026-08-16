@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
 from orphanproof.config import Settings
@@ -22,10 +24,10 @@ class Database:
     @property
     def database_url(self) -> str:
         if self._database_url:
-            return self._database_url
+            return _with_system_root_cert(self._database_url)
         if self._settings is None:
             raise RuntimeError("DATABASE_URL is required for the live repository")
-        return self._settings.require_database_url()
+        return _with_system_root_cert(self._settings.require_database_url())
 
     @contextmanager
     def connect(self) -> Iterator[Any]:
@@ -34,3 +36,17 @@ class Database:
             yield connection
         finally:
             connection.close()
+
+
+def _with_system_root_cert(database_url: str) -> str:
+    info = conninfo_to_dict(database_url)
+    sslmode = info.get("sslmode")
+    if sslmode and sslmode.lower() != "disable":
+        packaged_root = os.getenv("ORPHANPROOF_DATABASE_SSLROOTCERT")
+        if packaged_root:
+            info["sslrootcert"] = packaged_root
+            return make_conninfo(**info)
+    if sslmode and sslmode.lower() != "disable" and "sslrootcert" not in info:
+        info["sslrootcert"] = "system"
+        return make_conninfo(**info)
+    return database_url

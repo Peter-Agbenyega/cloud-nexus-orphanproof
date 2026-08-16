@@ -1,6 +1,6 @@
 # Cloud Nexus OrphanProof API
 
-Phase P3 implements a local, read-only FastAPI memory retrieval service. Phase P4 adds an AI-assisted analysis endpoint that combines persistent memory, Bedrock embeddings, CockroachDB vector retrieval, and Nova reasoning when live providers are configured.
+Phase P3 implements a local, read-only FastAPI memory retrieval service. Phase P4 adds an AI-assisted analysis endpoint that combines persistent memory, Bedrock embeddings, CockroachDB vector retrieval, and Nova reasoning when live providers are configured. Phase P6 adds a judge-facing Lambda-compatible demo endpoint that uses deterministic local embeddings and CockroachDB vector memory without invoking Bedrock.
 
 The P3 memory-context endpoint does not generate an AI verdict. Historical seed decisions are returned as historical evidence only.
 
@@ -17,9 +17,9 @@ The P3 memory-context endpoint does not generate an AI verdict. Historical seed 
 ## Still Planned
 
 - Live Managed MCP verification
-- Live Bedrock verification
+- Live Bedrock reasoning verification
 - Dashboard
-- AWS deployment
+- Full dashboard deployment
 - Human approval workflow UI
 
 No automatic deletion, release, mutation, or remediation workflow exists in P3 or P4.
@@ -52,9 +52,11 @@ ORPHANPROOF_MCP_ENABLED=false
 ORPHANPROOF_MCP_URL=https://cockroachlabs.cloud/mcp
 ```
 
-`ORPHANPROOF_BEDROCK_EMBEDDING_MODEL` supports `amazon.titan-embed-text-v2:0` and `cohere.embed-v4:0`. Both paths must return exactly 1024-dimensional embeddings for the existing CockroachDB `VECTOR(1024)` schema.
+`ORPHANPROOF_BEDROCK_EMBEDDING_MODEL` supports `local.feature-hash-v1`, `amazon.titan-embed-text-v2:0`, `cohere.embed-v4:0`, `us.cohere.embed-v4:0`, and `global.cohere.embed-v4:0`. All paths must return exactly 1024-dimensional embeddings for the existing CockroachDB `VECTOR(1024)` schema. The public Lambda demo should use `local.feature-hash-v1` because live Bedrock embedding and reasoning calls were provider-throttled during deadline testing.
 
 Live database use requires `DATABASE_URL`, but the value must be placed only in the ignored local `.env` file or a managed secret service. Obtain the connection value from the approved CockroachDB connection workflow. Never copy the value into source code, documentation, screenshots, logs, terminal output, or Git history.
+
+AWS Lambda deployment should use AWS Systems Manager Parameter Store SecureString for the database URL. The Lambda receives only `ORPHANPROOF_DATABASE_URL_PARAMETER_NAME`; the application resolves the SecureString at runtime and does not log the value.
 
 Managed MCP live verification also requires local `ORPHANPROOF_MCP_CLUSTER_ID` and `ORPHANPROOF_MCP_BEARER_TOKEN` values. These are intentionally omitted from `.env.example` and must never be pasted into chat, source, documentation, logs, or test fixtures.
 
@@ -86,6 +88,7 @@ Expected P3 fields include:
 
 - `phase`: `P3_MEMORY_RETRIEVAL`
 - `database_mode`: `dependency_injected`
+- `deployment_platform`: `local` or `aws_lambda`
 - `analysis_mode`: `evidence_only`
 - `ai_verdict_generated`: `false`
 
@@ -164,3 +167,40 @@ curl -X POST http://127.0.0.1:8000/api/v1/resources/demo-rds-dr-standby-001/anal
 ```
 
 Provider failures return sanitized errors and must not include database URLs, AWS credentials, MCP credentials, full embeddings, raw provider responses, or stack traces.
+
+### `GET /api/v1/resources/{resource_key}/vector-memory`
+
+Runs the P6 deterministic vector-memory demo for a known synthetic resource. This endpoint retrieves current persistent memory, builds current-resource retrieval text, uses the configured embedding provider, and queries CockroachDB vector similarity for historical decisions.
+
+For the public demo, configure:
+
+```text
+ORPHANPROOF_BEDROCK_EMBEDDING_MODEL=local.feature-hash-v1
+```
+
+Successful responses include:
+
+- `analysis_mode`: `vector_memory`
+- `ai_verdict_generated`: `false`
+- `current_ai_verdict`: `null`
+- `automatic_action_taken`: `false`
+- `human_review_required`: `true`
+- `embedding_model`: provider provenance, normally `local.feature-hash-v1`
+- `memory_transport`: `direct_cockroachdb`
+- `similar_historical_decisions`: historical nearest neighbors only
+
+The nearest historical verdict is not a newly generated current AI recommendation.
+
+```bash
+curl http://127.0.0.1:8000/api/v1/resources/demo-rds-dr-standby-001/vector-memory
+```
+
+### `GET /`
+
+Returns the judge-facing HTML demo page. The page calls the vector-memory endpoint for the RDS and EBS demo resources and shows the safety banner:
+
+```text
+OrphanProof recommends and explains.
+It never deletes cloud resources automatically.
+Human review required.
+```

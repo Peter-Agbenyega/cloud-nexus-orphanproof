@@ -1,6 +1,6 @@
 # Cloud Nexus OrphanProof Project Charter
 
-Current status: Phase P1 database schema foundation is IMPLEMENTED AND LIVE-VERIFIED. Phase P2 synthetic data ingestion is IMPLEMENTED AND LIVE VERIFIED. Phase P3 local API foundation is implemented. Phase P4 agentic memory integration is implemented locally with unit-test fakes; live CockroachDB vector loading, Amazon Bedrock inference, and CockroachDB Managed MCP verification remain pending until local credentials are available and the safe live gates pass. The overall application is still under active development.
+Current status: Phase P1 database schema foundation is IMPLEMENTED AND LIVE-VERIFIED. Phase P2 synthetic data ingestion is IMPLEMENTED AND LIVE VERIFIED. Phase P3 local API foundation is implemented. Phase P4 agentic memory integration is implemented locally with unit-test fakes; live verification pending remains true for Bedrock reasoning and Managed MCP. Phase P5 deterministic local vector-memory fallback is implemented and live-verified against CockroachDB vector memory. Phase P6 AWS Lambda public-demo foundation is implemented. The overall application is still under active development.
 
 Cloud Nexus OrphanProof is in an active build phase. This charter describes the intended product direction, safety principles, completed Phase P1 database foundation, implemented and live-verified Phase P2 synthetic data ingestion, implemented P3/P4 local application foundations, planned MVP scope, and demo plan. It does not claim that live P4 provider verification, AWS deployment, dashboard, or human approval interface are complete.
 
@@ -27,8 +27,9 @@ The planned MVP is designed to map sponsor technologies to a concrete cloud oper
 
 - CockroachDB Managed MCP integration: implemented locally; live verification pending local auth.
 - CockroachDB Distributed Vector Indexing: Phase P1 schema support and Phase P4 retrieval integration implemented for historical context, incident notes, lifecycle explanations, and similar resource patterns.
-- Amazon Bedrock reasoning: local Nova Lite structured reasoning provider implemented; live verification pending local AWS auth.
-- AWS Lambda and API Gateway: planned serverless API surface for demo workflows.
+- Amazon Bedrock reasoning: local Nova Lite structured reasoning provider implemented; live verification currently provider-throttled.
+- AWS Lambda Function URL: implemented as the smallest public HTTPS demo surface.
+- AWS API Gateway: planned only if the demo later needs richer routing or authorization.
 - Amazon S3 Remediation Passports: planned storage layer for synthetic evidence snapshots, decision evidence, and human-reviewable remediation records.
 
 All competition-facing demonstrations should use synthetic AWS resource evidence unless the user explicitly authorizes a different safe data source.
@@ -74,7 +75,9 @@ The two primary demo stories now exist in CockroachDB:
 - Phase P2 synthetic persistent-memory dataset: implemented and live-verified
 - Phase P3 local API foundation: implemented locally
 - Phase P4 agentic memory integration: implemented locally; live verification pending
-- AWS Lambda and API Gateway: planned
+- Phase P5 deterministic local vector-memory fallback: implemented and live-verified
+- AWS Lambda Function URL demo: implemented
+- AWS API Gateway: planned only if needed later
 - Amazon S3 Remediation Passports: planned
 - React dashboard: not yet implemented
 - Human approval interface: not yet implemented
@@ -128,7 +131,7 @@ The planned architecture has five conceptual layers:
 - Retrieval layer: CockroachDB Distributed Vector Indexing is implemented locally to retrieve similar records and historical explanations.
 - Reasoning layer: Amazon Bedrock providers are implemented locally to summarize evidence and generate human-reviewable verdict explanations.
 
-The Phase P1 memory schema foundation and P4 local agentic memory path are implemented. Live provider verification and deployment remain separate later steps.
+The Phase P1 memory schema foundation, P4 local agentic memory path, P5 local vector fallback, and P6 Lambda demo foundation are implemented. Live Bedrock reasoning verification remains separate because provider throttling prevented a successful Nova pass.
 
 ## Implemented Phase P3 Local API Foundation
 
@@ -210,5 +213,7 @@ Phase P1 database schema foundation: IMPLEMENTED AND LIVE-VERIFIED
 Phase P2 synthetic data ingestion: IMPLEMENTED AND LIVE VERIFIED
 Phase P3 local API foundation: IMPLEMENTED LOCALLY
 Phase P4 agentic memory integration: IMPLEMENTED LOCALLY; LIVE INTEGRATION VERIFICATION PENDING
+Phase P5 deterministic vector memory: IMPLEMENTED AND LIVE-VERIFIED
+Phase P6 Lambda public-demo foundation: IMPLEMENTED
 
-The overall application is still under active development. Local P4 Managed MCP, Bedrock reasoning, vector retrieval, and agent verdict workflow are implemented but not yet live-verified in this coding step. AWS Lambda and API Gateway, Amazon S3 Remediation Passports, the React dashboard, and the human approval interface remain planned or not yet implemented.
+The overall application is still under active development. Local P4 Managed MCP and Bedrock reasoning are implemented but not live-verified in this coding step. AWS API Gateway, Amazon S3 Remediation Passports, the React dashboard, and the human approval interface remain planned or not yet implemented.
